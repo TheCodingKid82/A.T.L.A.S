@@ -40,8 +40,8 @@ RUN pnpm --filter @atlas/dashboard build
 FROM base AS runner
 WORKDIR /app
 
-# Copy node_modules (full pnpm workspace with symlinks)
-COPY --from=deps /app/node_modules ./node_modules
+# Copy node_modules (root from build to include generated Prisma client)
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
 COPY --from=deps /app/packages/database/node_modules ./packages/database/node_modules
 COPY --from=deps /app/packages/services/node_modules ./packages/services/node_modules

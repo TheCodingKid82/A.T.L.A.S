@@ -41,7 +41,7 @@ RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=build /app/node_modules ./node_modules
 COPY --from=deps /app/apps/mcp-server/node_modules ./apps/mcp-server/node_modules
 COPY --from=deps /app/packages/database/node_modules ./packages/database/node_modules
 COPY --from=deps /app/packages/services/node_modules ./packages/services/node_modules
