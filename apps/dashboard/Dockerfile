@@ -46,10 +46,8 @@ COPY --from=build /app/apps/dashboard/public ./apps/dashboard/public
 COPY --from=build /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/packages/database/prisma ./packages/database/prisma
 
-RUN ls -la . && ls -la apps/dashboard/ 2>/dev/null || true && find . -name "server.js" -not -path "*/node_modules/*" 2>/dev/null || true
-
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 
-CMD ["node", "apps/dashboard/server.js"]
+CMD ["node", "server.js"]
