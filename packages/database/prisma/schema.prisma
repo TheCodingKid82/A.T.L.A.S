@@ -1,0 +1,285 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Agents ───────────────────────────────────────────────
+
+model Agent {
+  id            String   @id @default(cuid())
+  name          String   @unique
+  slug          String   @unique
+  description   String?
+  status        AgentStatus @default(OFFLINE)
+  apiKeyHash    String   @unique @map("api_key_hash")
+  apiKeyPrefix  String   @map("api_key_prefix")
+  rateLimit     Int      @default(100) @map("rate_limit")
+  lastActiveAt  DateTime? @map("last_active_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  tasksAssigned   Task[]   @relation("AssignedTasks")
+  tasksCreated    Task[]   @relation("CreatedTasks")
+  channelMembers  ChannelMember[]
+  messagesSent    Message[]
+  mcpPermissions  McpPermission[]
+  browserActions  BrowserAction[]
+  auditLogs       AuditLog[]
+
+  @@map("agents")
+}
+
+enum AgentStatus {
+  ONLINE
+  OFFLINE
+  ERROR
+  PROCESSING
+}
+
+// ─── Boards & Tasks ───────────────────────────────────────
+
+model Board {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  columns     Column[]
+
+  @@map("boards")
+}
+
+model Column {
+  id        String   @id @default(cuid())
+  name      String
+  position  Int      @default(0)
+  boardId   String   @map("board_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  board     Board    @relation(fields: [boardId], references: [id], onDelete: Cascade)
+  tasks     Task[]
+
+  @@map("columns")
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  title       String
+  description String?
+  priority    TaskPriority @default(MEDIUM)
+  tags        String[]     @default([])
+  position    Int          @default(0)
+  columnId    String       @map("column_id")
+  assigneeId  String?      @map("assignee_id")
+  creatorId   String?      @map("creator_id")
+  dueDate     DateTime?    @map("due_date")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  column      Column       @relation(fields: [columnId], references: [id], onDelete: Cascade)
+  assignee    Agent?       @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  creator     Agent?       @relation("CreatedTasks", fields: [creatorId], references: [id])
+
+  @@map("tasks")
+}
+
+enum TaskPriority {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// ─── Documents ────────────────────────────────────────────
+
+model Document {
+  id          String   @id @default(cuid())
+  title       String
+  mimeType    String   @map("mime_type")
+  content     String   @default("")
+  tags        String[] @default([])
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  versions    DocumentVersion[]
+
+  @@map("documents")
+}
+
+model DocumentVersion {
+  id          String   @id @default(cuid())
+  documentId  String   @map("document_id")
+  version     Int
+  content     String   @default("")
+  changelog   String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document    Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, version])
+  @@map("document_versions")
+}
+
+// ─── Messaging ────────────────────────────────────────────
+
+model Channel {
+  id          String      @id @default(cuid())
+  name        String
+  type        ChannelType @default(GROUP)
+  description String?
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  members     ChannelMember[]
+  messages    Message[]
+
+  @@map("channels")
+}
+
+enum ChannelType {
+  GROUP
+  DIRECT
+}
+
+model ChannelMember {
+  id        String   @id @default(cuid())
+  channelId String   @map("channel_id")
+  agentId   String   @map("agent_id")
+  joinedAt  DateTime @default(now()) @map("joined_at")
+
+  channel   Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([channelId, agentId])
+  @@map("channel_members")
+}
+
+model Message {
+  id            String          @id @default(cuid())
+  channelId     String          @map("channel_id")
+  senderId      String          @map("sender_id")
+  content       String
+  priority      MessagePriority @default(NORMAL)
+  threadId      String?         @map("thread_id")
+  structuredData Json?          @map("structured_data")
+  acknowledged  Boolean         @default(false)
+  createdAt     DateTime        @default(now()) @map("created_at")
+
+  channel       Channel         @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  sender        Agent           @relation(fields: [senderId], references: [id])
+  thread        Message?        @relation("ThreadMessages", fields: [threadId], references: [id])
+  replies       Message[]       @relation("ThreadMessages")
+
+  @@map("messages")
+}
+
+enum MessagePriority {
+  URGENT
+  HIGH
+  NORMAL
+  LOW
+}
+
+// ─── MCP Registry ─────────────────────────────────────────
+
+model McpConnection {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  url         String
+  transport   String   @default("streamable-http")
+  status      McpConnectionStatus @default(UNKNOWN)
+  lastHealthCheck DateTime? @map("last_health_check")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions McpPermission[]
+
+  @@map("mcp_connections")
+}
+
+enum McpConnectionStatus {
+  HEALTHY
+  UNHEALTHY
+  UNKNOWN
+}
+
+model McpPermission {
+  id             String   @id @default(cuid())
+  mcpConnectionId String  @map("mcp_connection_id")
+  agentId        String   @map("agent_id")
+  allowedTools   String[] @default([]) @map("allowed_tools")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  mcpConnection  McpConnection @relation(fields: [mcpConnectionId], references: [id], onDelete: Cascade)
+  agent          Agent         @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([mcpConnectionId, agentId])
+  @@map("mcp_permissions")
+}
+
+// ─── Browser ──────────────────────────────────────────────
+
+model BrowserAction {
+  id          String   @id @default(cuid())
+  agentId     String   @map("agent_id")
+  action      String
+  url         String?
+  selector    String?
+  value       String?
+  sessionName String   @default("atlas-shared") @map("session_name")
+  result      Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  agent       Agent    @relation(fields: [agentId], references: [id])
+
+  @@map("browser_actions")
+}
+
+// ─── Credentials ──────────────────────────────────────────
+
+model Credential {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  service        String
+  encryptedValue String   @map("encrypted_value")
+  iv             String
+  authTag        String   @map("auth_tag")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@map("credentials")
+}
+
+// ─── Memory ───────────────────────────────────────────────
+
+model MemoryEntry {
+  id               String   @id @default(cuid())
+  supermemoryId    String?  @unique @map("supermemory_id")
+  content          String
+  containerTag     String   @map("container_tag")
+  metadata         Json?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@map("memory_entries")
+}
+
+// ─── Audit ────────────────────────────────────────────────
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  agentId   String   @map("agent_id")
+  tool      String
+  input     Json?
+  output    Json?
+  duration  Int?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  agent     Agent    @relation(fields: [agentId], references: [id])
+
+  @@map("audit_logs")
+}

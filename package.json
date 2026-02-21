@@ -1,0 +1,29 @@
+{
+  "name": "atlas",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A.T.L.A.S. — Automated Task Logic and Agent Supervision",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "db:generate": "pnpm --filter @atlas/database generate",
+    "db:migrate": "pnpm --filter @atlas/database migrate",
+    "db:seed": "pnpm --filter @atlas/database seed",
+    "db:deploy": "pnpm --filter @atlas/database deploy",
+    "db:studio": "pnpm --filter @atlas/database studio",
+    "setup": "bash scripts/setup.sh"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "esbuild",
+      "prisma"
+    ]
+  }
+}
