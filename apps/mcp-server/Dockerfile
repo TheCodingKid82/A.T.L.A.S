@@ -29,6 +29,7 @@ COPY apps/mcp-server apps/mcp-server
 RUN pnpm --filter @atlas/database generate
 
 # Build all packages in dependency order
+ENV NODE_OPTIONS=--max-old-space-size=4096
 RUN pnpm --filter @atlas/shared build
 RUN pnpm --filter @atlas/database build
 RUN pnpm --filter @atlas/services build
