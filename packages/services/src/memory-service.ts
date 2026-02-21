@@ -22,7 +22,7 @@ async function supermemoryFetch(path: string, options: RequestInit = {}) {
     throw new Error(`Supermemory API error (${res.status}): ${text}`);
   }
 
-  return res.json();
+  return res.json() as Promise<any>;
 }
 
 export class MemoryService {

@@ -1,8 +1,8 @@
-export { TaskService } from "./task-service.js";
-export { AgentService } from "./agent-service.js";
-export { DocumentService } from "./document-service.js";
-export { MessageService } from "./message-service.js";
-export { MemoryService } from "./memory-service.js";
-export { BrowserService } from "./browser-service.js";
-export { McpRegistryService } from "./mcp-registry-service.js";
-export { CredentialService } from "./credential-service.js";
+export { TaskService } from "./task-service";
+export { AgentService } from "./agent-service";
+export { DocumentService } from "./document-service";
+export { MessageService } from "./message-service";
+export { MemoryService } from "./memory-service";
+export { BrowserService } from "./browser-service";
+export { McpRegistryService } from "./mcp-registry-service";
+export { CredentialService } from "./credential-service";
