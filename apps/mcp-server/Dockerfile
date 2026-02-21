@@ -1,4 +1,5 @@
 FROM node:20-slim AS base
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 
@@ -36,10 +37,7 @@ RUN pnpm --filter @atlas/services build
 RUN pnpm --filter @atlas/mcp-server build
 
 # ── Production image ──────────────────────────────────────────
-FROM node:20-slim AS runner
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
-RUN corepack enable && corepack prepare pnpm@9 --activate
-WORKDIR /app
+FROM base AS runner
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=deps /app/apps/mcp-server/node_modules ./apps/mcp-server/node_modules
