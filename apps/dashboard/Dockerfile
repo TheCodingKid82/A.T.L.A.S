@@ -42,8 +42,8 @@ COPY --from=build /app/apps/dashboard/.next/standalone ./
 COPY --from=build /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
 COPY --from=build /app/apps/dashboard/public ./apps/dashboard/public
 
-# Prisma client is needed at runtime
-COPY --from=build /app/packages/database/node_modules/.prisma ./packages/database/node_modules/.prisma
+# Prisma schema + generated client needed at runtime
+COPY --from=build /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma ./node_modules/.prisma
 COPY --from=build /app/packages/database/prisma ./packages/database/prisma
 
 ENV NODE_ENV=production
