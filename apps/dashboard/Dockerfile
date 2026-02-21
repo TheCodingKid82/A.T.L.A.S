@@ -37,15 +37,21 @@ RUN pnpm --filter @atlas/dashboard build
 
 # ── Production image ──────────────────────────────────────────
 FROM node:20-slim AS runner
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY --from=build /app/apps/dashboard/.next/standalone ./
 COPY --from=build /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
 COPY --from=build /app/apps/dashboard/public ./apps/dashboard/public
 
-# Prisma schema + generated client needed at runtime
-COPY --from=build /app/node_modules/.pnpm/@prisma+client*/node_modules/.prisma ./node_modules/.prisma
-COPY --from=build /app/packages/database/prisma ./packages/database/prisma
+# Create symlinks from pnpm store so Node.js can resolve packages
+RUN for dir in node_modules/.pnpm/*/node_modules/*/; do \
+      pkg=$(echo "$dir" | sed "s|node_modules/.pnpm/[^/]*/node_modules/||;s|/$||"); \
+      if [ ! -e "node_modules/$pkg" ]; then \
+        mkdir -p "node_modules/$(dirname "$pkg")"; \
+        ln -s "$(pwd)/$dir" "node_modules/$pkg"; \
+      fi; \
+    done 2>/dev/null || true
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0

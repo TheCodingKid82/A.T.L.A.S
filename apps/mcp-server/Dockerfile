@@ -37,6 +37,7 @@ RUN pnpm --filter @atlas/mcp-server build
 
 # ── Production image ──────────────────────────────────────────
 FROM node:20-slim AS runner
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 
