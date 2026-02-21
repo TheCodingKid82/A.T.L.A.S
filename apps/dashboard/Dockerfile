@@ -48,8 +48,9 @@ COPY --from=deps /app/packages/services/node_modules ./packages/services/node_mo
 COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 
 # Copy workspace configs
-COPY --from=build /app/package.json ./
-COPY --from=build /app/pnpm-workspace.yaml ./
+COPY --from=deps /app/package.json ./
+COPY --from=deps /app/pnpm-workspace.yaml ./
+COPY --from=deps /app/pnpm-lock.yaml ./
 
 # Copy built packages
 COPY --from=build /app/packages/database/dist ./packages/database/dist
