@@ -1,4 +1,5 @@
 FROM node:20-slim AS base
+RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 
@@ -36,25 +37,37 @@ RUN pnpm --filter @atlas/services build
 RUN pnpm --filter @atlas/dashboard build
 
 # ── Production image ──────────────────────────────────────────
-FROM node:20-slim AS runner
-RUN apt-get update -y && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+FROM base AS runner
 WORKDIR /app
 
-COPY --from=build /app/apps/dashboard/.next/standalone ./
-COPY --from=build /app/apps/dashboard/.next/static ./apps/dashboard/.next/static
-COPY --from=build /app/apps/dashboard/public ./apps/dashboard/public
+# Copy node_modules (full pnpm workspace with symlinks)
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/dashboard/node_modules ./apps/dashboard/node_modules
+COPY --from=deps /app/packages/database/node_modules ./packages/database/node_modules
+COPY --from=deps /app/packages/services/node_modules ./packages/services/node_modules
+COPY --from=deps /app/packages/shared/node_modules ./packages/shared/node_modules
 
-# Create symlinks from pnpm store so Node.js can resolve packages
-RUN for dir in node_modules/.pnpm/*/node_modules/*/; do \
-      pkg=$(echo "$dir" | sed "s|node_modules/.pnpm/[^/]*/node_modules/||;s|/$||"); \
-      if [ ! -e "node_modules/$pkg" ]; then \
-        mkdir -p "node_modules/$(dirname "$pkg")"; \
-        ln -s "$(pwd)/$dir" "node_modules/$pkg"; \
-      fi; \
-    done 2>/dev/null || true
+# Copy workspace configs
+COPY --from=build /app/package.json ./
+COPY --from=build /app/pnpm-workspace.yaml ./
+
+# Copy built packages
+COPY --from=build /app/packages/database/dist ./packages/database/dist
+COPY --from=build /app/packages/database/package.json ./packages/database/
+COPY --from=build /app/packages/database/prisma ./packages/database/prisma
+COPY --from=build /app/packages/shared/dist ./packages/shared/dist
+COPY --from=build /app/packages/shared/package.json ./packages/shared/
+COPY --from=build /app/packages/services/dist ./packages/services/dist
+COPY --from=build /app/packages/services/package.json ./packages/services/
+
+# Copy built Next.js app
+COPY --from=build /app/apps/dashboard/.next ./apps/dashboard/.next
+COPY --from=build /app/apps/dashboard/public ./apps/dashboard/public
+COPY --from=build /app/apps/dashboard/package.json ./apps/dashboard/
+COPY --from=build /app/apps/dashboard/next.config.js ./apps/dashboard/
 
 ENV NODE_ENV=production
 ENV HOSTNAME=0.0.0.0
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["pnpm", "--filter", "@atlas/dashboard", "start"]
