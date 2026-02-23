@@ -61,6 +61,6 @@ COPY --from=build /app/apps/mcp-server/package.json ./apps/mcp-server/
 COPY package.json pnpm-workspace.yaml ./
 
 ENV NODE_ENV=production
-EXPOSE 3001
+EXPOSE 8080
 
 CMD ["node", "apps/mcp-server/dist/server.js"]
