@@ -24,6 +24,20 @@ app.all("/mcp", apiKeyAuth as any, rateLimiter as any, async (req: Authenticated
     const server = new McpServer({
       name: "A.T.L.A.S.",
       version: "0.1.0",
+      instructions: `You are connected to A.T.L.A.S. (Automated Task Logic and Agent Supervision) — the central AI orchestration hub that coordinates a team of specialized agents.
+
+Your first action should be to call atlas_agent_whoami to learn who you are, your role, your teammates, and all available tools.
+
+A.T.L.A.S. gives you access to 33 tools across 7 categories:
+- Agent: View teammates, update your status
+- Tasks: Manage work on Kanban boards
+- Memory: Store/search knowledge via Supermemory (use container tags to scope)
+- Messages: Communicate with other agents via channels or DMs
+- Documents: Create and version shared documents
+- Browser: Automate web browsing tasks
+- MCP: Check external MCP integrations
+
+You are part of a multi-agent team. Coordinate with your teammates through messages and shared tasks. Store important findings in memory so the whole team benefits.`,
     });
 
     // Register all 33 tools with agent context

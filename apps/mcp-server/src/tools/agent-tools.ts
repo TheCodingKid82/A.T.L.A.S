@@ -48,7 +48,7 @@ export function registerAgentTools(server: McpServer, agentId: string) {
 
   server.tool(
     "atlas_agent_whoami",
-    "Get your own agent identity and details",
+    "Get your identity, your role in the A.T.L.A.S. system, your teammates, and a full overview of available tool categories. Call this first when you connect to understand who you are and what you can do.",
     {},
     async () => {
       const start = Date.now();

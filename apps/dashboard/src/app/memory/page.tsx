@@ -7,14 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input, Textarea } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Dialog } from "@/components/ui/dialog";
-import { Plus, Search, Trash2, Brain } from "lucide-react";
+import { Plus, Search, Trash2, Brain, Database, Tag, Globe, User, Glasses } from "lucide-react";
 
 const CONTAINER_TAGS = [
-  { label: "All", value: "" },
-  { label: "Global", value: "atlas-global" },
-  { label: "H.E.N.R.Y.", value: "atlas-agent-henry" },
-  { label: "P.O.K.E.", value: "atlas-agent-poke" },
-  { label: "I.R.I.S.", value: "atlas-agent-iris" },
+  { label: "All", value: "", icon: Database, description: "All memory entries across every scope" },
+  { label: "Global", value: "atlas-global", icon: Globe, description: "Shared knowledge accessible to all agents" },
+  { label: "H.E.N.R.Y.", value: "atlas-agent-henry", icon: User, description: "Business AI — research, networking, results" },
+  { label: "P.O.K.E.", value: "atlas-agent-poke", icon: User, description: "Personal AI — organization, knowledge, errands" },
+  { label: "I.R.I.S.", value: "atlas-agent-iris", icon: Glasses, description: "Smart glasses AI — reality interface" },
 ];
 
 export default function MemoryPage() {
@@ -61,7 +61,7 @@ export default function MemoryPage() {
         <div>
           <h1 className="text-2xl font-bold">Memory</h1>
           <p className="text-atlas-text-muted mt-1">
-            Supermemory-backed knowledge store
+            Supermemory-backed semantic knowledge store
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>
@@ -69,6 +69,61 @@ export default function MemoryPage() {
           Add Memory
         </Button>
       </div>
+
+      {/* Supermemory Setup Info */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Brain className="w-5 h-5 text-atlas-accent" />
+            <h2 className="text-lg font-semibold">Supermemory Setup</h2>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-atlas-text-muted">
+            A.T.L.A.S. uses <span className="text-atlas-text font-medium">Supermemory</span> as
+            its semantic memory layer. Agents store and retrieve knowledge using natural language
+            search — memories are automatically embedded and indexed for fast retrieval.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3 space-y-1">
+              <p className="text-xs text-atlas-text-muted uppercase tracking-wider">How it works</p>
+              <p className="text-sm">
+                When an agent calls <code className="text-xs bg-atlas-border/50 px-1 py-0.5 rounded">atlas_memory_add</code>,
+                the content is sent to Supermemory's API for embedding and also stored locally in Postgres as a fallback.
+                Search uses semantic similarity via Supermemory, with local fuzzy matching as backup.
+              </p>
+            </div>
+            <div className="bg-atlas-bg border border-atlas-border rounded-lg p-3 space-y-1">
+              <p className="text-xs text-atlas-text-muted uppercase tracking-wider">Container Tags</p>
+              <p className="text-sm">
+                Memories are scoped using container tags. Use <code className="text-xs bg-atlas-border/50 px-1 py-0.5 rounded">atlas-global</code> for
+                shared team knowledge, or agent-specific tags like <code className="text-xs bg-atlas-border/50 px-1 py-0.5 rounded">atlas-agent-henry</code> to
+                keep memories private to a single agent.
+              </p>
+            </div>
+          </div>
+
+          {/* Container Tag Reference */}
+          <div className="space-y-2">
+            <p className="text-xs text-atlas-text-muted uppercase tracking-wider">Available Scopes</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2">
+              {CONTAINER_TAGS.filter(t => t.value).map((tag) => {
+                const Icon = tag.icon;
+                return (
+                  <div key={tag.value} className="flex items-start gap-2 bg-atlas-bg border border-atlas-border rounded-lg p-2.5">
+                    <Icon className="w-4 h-4 text-atlas-accent mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-xs font-medium">{tag.label}</p>
+                      <p className="text-[11px] text-atlas-text-muted leading-tight">{tag.description}</p>
+                      <code className="text-[10px] text-atlas-accent/70">{tag.value}</code>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Search & Filter */}
       <div className="flex gap-4">
@@ -136,7 +191,7 @@ export default function MemoryPage() {
             <CardContent className="text-center py-12">
               <Brain className="w-12 h-12 text-atlas-text-muted mx-auto mb-3" />
               <p className="text-atlas-text-muted">
-                {searchResults ? "No results found" : "No memories yet"}
+                {searchResults ? "No results found" : "No memories stored yet. Agents can add memories via MCP tools."}
               </p>
             </CardContent>
           </Card>
