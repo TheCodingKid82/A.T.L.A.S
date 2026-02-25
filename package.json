@@ -12,7 +12,10 @@
     "db:seed": "pnpm --filter @atlas/database seed",
     "db:deploy": "pnpm --filter @atlas/database deploy",
     "db:studio": "pnpm --filter @atlas/database studio",
-    "setup": "bash scripts/setup.sh"
+    "setup": "bash scripts/setup.sh",
+    "mcp:import": "tsx scripts/add-mcp-servers.ts",
+    "mcp:import:dry": "tsx scripts/add-mcp-servers.ts --dry-run",
+    "mcp:import:trellis": "tsx scripts/add-mcp-servers.ts --server=task-trellis-mcp"
   },
   "engines": {
     "node": ">=18.0.0",
