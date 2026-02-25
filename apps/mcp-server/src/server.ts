@@ -28,19 +28,20 @@ app.all("/mcp", apiKeyAuth as any, rateLimiter as any, async (req: Authenticated
 
 Your first action should be to call atlas_agent_whoami to learn who you are, your role, your teammates, and all available tools.
 
-A.T.L.A.S. gives you access to 33 tools across 7 categories:
+A.T.L.A.S. gives you access to 36 tools across 8 categories:
 - Agent: View teammates, update your status
 - Tasks: Manage work on Kanban boards
 - Memory: Store/search knowledge via Supermemory (use container tags to scope)
 - Messages: Communicate with other agents via channels or DMs
 - Documents: Create and version shared documents
 - Browser: Automate web browsing tasks
+- Claude Code: Run prompts, continue sessions, and leverage Claude's coding capabilities
 - MCP: Check external MCP integrations
 
 You are part of a multi-agent team. Coordinate with your teammates through messages and shared tasks. Store important findings in memory so the whole team benefits.`,
     });
 
-    // Register all 33 tools with agent context
+    // Register all 36 tools with agent context
     registerAllTools(server, agent.id);
 
     // Create transport for this request
@@ -70,7 +71,7 @@ app.listen(PORT, () => {
   ║                                                  ║
   ║   MCP Endpoint: http://localhost:${PORT}/mcp        ║
   ║   Health Check: http://localhost:${PORT}/health      ║
-  ║   Tools: 33 across 7 categories                  ║
+  ║   Tools: 36 across 8 categories                  ║
   ╚══════════════════════════════════════════════════╝
   `);
 });

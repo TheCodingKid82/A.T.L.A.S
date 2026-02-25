@@ -6,3 +6,4 @@ export * from "./mcp";
 export * from "./browser";
 export * from "./memory";
 export * from "./credential";
+export * from "./claude-code";

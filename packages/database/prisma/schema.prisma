@@ -28,6 +28,7 @@ model Agent {
   messagesSent    Message[]
   mcpPermissions  McpPermission[]
   browserActions  BrowserAction[]
+  claudeCodeActions ClaudeCodeAction[]
   auditLogs       AuditLog[]
 
   @@map("agents")
@@ -238,6 +239,24 @@ model BrowserAction {
   agent       Agent    @relation(fields: [agentId], references: [id])
 
   @@map("browser_actions")
+}
+
+// ─── Claude Code ─────────────────────────────────────
+
+model ClaudeCodeAction {
+  id               String   @id @default(cuid())
+  agentId          String   @map("agent_id")
+  action           String
+  sessionId        String?  @map("session_id")
+  prompt           String
+  workingDirectory String?  @map("working_directory")
+  result           Json?
+  duration         Int?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  agent            Agent    @relation(fields: [agentId], references: [id])
+
+  @@map("claude_code_actions")
 }
 
 // ─── Credentials ──────────────────────────────────────────

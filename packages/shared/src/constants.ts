@@ -28,6 +28,8 @@ export const MEMORY_CONTAINER_TAGS = {
 
 export const BROWSER_SESSION_NAME = "atlas-shared";
 
+export const CLAUDE_CODE_DEFAULT_TIMEOUT = 300000;
+
 export const API_KEY_PREFIX = "atl_";
 
 export const MCP_SERVER_PORT = 3001;

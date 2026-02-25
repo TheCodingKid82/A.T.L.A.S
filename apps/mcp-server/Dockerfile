@@ -39,6 +39,10 @@ RUN pnpm --filter @atlas/mcp-server build
 # ── Production image ──────────────────────────────────────────
 FROM base AS runner
 
+# Install agent-browser CLI, Claude Code CLI, and Playwright Chromium with system deps
+RUN npx playwright install --with-deps chromium && \
+    npm install -g agent-browser @anthropic-ai/claude-code
+
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=deps /app/apps/mcp-server/node_modules ./apps/mcp-server/node_modules
 COPY --from=deps /app/packages/database/node_modules ./packages/database/node_modules
