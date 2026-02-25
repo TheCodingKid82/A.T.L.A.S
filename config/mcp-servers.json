@@ -1,0 +1,38 @@
+{
+  "$schema": "./mcp-servers.schema.json",
+  "version": "1.0.0",
+  "description": "MCP server configurations for A.T.L.A.S.",
+  "servers": [
+    {
+      "name": "task-trellis-mcp",
+      "enabled": true,
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@task-trellis/mcp-server", "{{projectFolder}}", "{{trellisFolder}}"],
+      "env": {},
+      "metadata": {
+        "description": "Task Trellis MCP - Intelligent task management and organization system",
+        "version": "latest",
+        "category": "productivity",
+        "documentation": "https://github.com/task-trellis/mcp-server",
+        "requiredVariables": {
+          "projectFolder": {
+            "description": "Path to the project folder",
+            "example": "/path/to/project",
+            "required": true
+          },
+          "trellisFolder": {
+            "description": "Path to the Trellis configuration folder",
+            "example": "/path/to/.trellis",
+            "required": true
+          }
+        }
+      },
+      "permissions": {
+        "henry": ["trellis_*"],
+        "poke": ["trellis_*"],
+        "iris": ["trellis_read_*", "trellis_list_*"]
+      }
+    }
+  ]
+}
