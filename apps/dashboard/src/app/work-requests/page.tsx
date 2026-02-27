@@ -18,13 +18,20 @@ import {
   Bot,
 } from "lucide-react";
 
-const STATUS_CONFIG: Record<string, { icon: any; color: string; variant: any }> = {
-  ACTIVE: { icon: Loader2, color: "text-blue-400", variant: "default" },
+const STATUS_CONFIG: Record<string, { icon: any; color: string; variant: any; spin?: boolean }> = {
+  ACTIVE: { icon: Loader2, color: "text-blue-400", variant: "default", spin: true },
   PAUSED: { icon: Pause, color: "text-yellow-400", variant: "warning" },
   COMPLETED: { icon: CheckCircle2, color: "text-green-400", variant: "success" },
   FAILED: { icon: XCircle, color: "text-red-400", variant: "error" },
   CANCELLED: { icon: Ban, color: "text-atlas-text-muted", variant: "default" },
 };
+
+/** Check if a session has work actively in progress */
+function isSessionBusy(session: any): boolean {
+  return session.messages?.some(
+    (m: any) => m.status === "PENDING" || m.status === "PROCESSING"
+  ) ?? false;
+}
 
 const MSG_STATUS_CONFIG: Record<string, { color: string }> = {
   PENDING: { color: "text-yellow-400" },
@@ -82,9 +89,7 @@ export default function WorkRequestsPage() {
             >
               <CardContent className="flex items-center gap-3">
                 <Icon
-                  className={`w-5 h-5 ${config.color} ${
-                    status === "ACTIVE" ? "animate-spin" : ""
-                  }`}
+                  className={`w-5 h-5 ${config.color}`}
                 />
                 <div>
                   <p className="text-xl font-bold">{counts[status]}</p>
@@ -121,6 +126,7 @@ export default function WorkRequestsPage() {
           {filtered?.map((session: any) => {
             const config = STATUS_CONFIG[session.status] ?? STATUS_CONFIG.ACTIVE;
             const Icon = config.icon;
+            const busy = isSessionBusy(session);
             const isExpanded = expanded === session.id;
             const messageCount = session.messages?.length ?? 0;
 
@@ -140,7 +146,7 @@ export default function WorkRequestsPage() {
                   )}
                   <Icon
                     className={`w-4 h-4 ${config.color} shrink-0 ${
-                      session.status === "ACTIVE" ? "animate-spin" : ""
+                      busy && config.spin ? "animate-spin" : ""
                     }`}
                   />
                   <div className="flex-1 min-w-0">

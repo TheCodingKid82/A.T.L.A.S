@@ -46,8 +46,16 @@ export class WorkSessionService {
     if (session.requesterId !== requesterId) {
       throw new Error("Only the session owner can send messages");
     }
-    if (session.status !== "ACTIVE") {
+    if (session.status !== "ACTIVE" && session.status !== "COMPLETED") {
       throw new Error(`Cannot send messages to a ${session.status} session`);
+    }
+
+    // Re-open completed sessions for continuation
+    if (session.status === "COMPLETED") {
+      await prisma.workSession.update({
+        where: { id: sessionId },
+        data: { status: "ACTIVE" },
+      });
     }
 
     return prisma.workMessage.create({
@@ -197,19 +205,22 @@ export class WorkSessionService {
       include: { session: { include: { requester: true } } },
     });
 
-    // Update session's claudeSessionId if provided
+    // Update session: store claudeSessionId and mark COMPLETED
+    // (if user sends atlas_work_continue later, addMessage re-opens to ACTIVE)
+    const sessionUpdate: Prisma.WorkSessionUpdateInput = { status: "COMPLETED" };
     if (claudeSessionId) {
-      await prisma.workSession.update({
-        where: { id: updated.sessionId },
-        data: { claudeSessionId },
-      });
+      sessionUpdate.claudeSessionId = claudeSessionId;
     }
+    await prisma.workSession.update({
+      where: { id: updated.sessionId },
+      data: sessionUpdate,
+    });
 
     return updated;
   }
 
   async failMessage(messageId: string, errorMessage: string) {
-    return prisma.workMessage.update({
+    const updated = await prisma.workMessage.update({
       where: { id: messageId },
       data: {
         status: "FAILED",
@@ -217,5 +228,46 @@ export class WorkSessionService {
       },
       include: { session: { include: { requester: true } } },
     });
+
+    // Mark session as FAILED
+    await prisma.workSession.update({
+      where: { id: updated.sessionId },
+      data: { status: "FAILED" },
+    });
+
+    return updated;
+  }
+
+  /** Fix stale ACTIVE sessions whose messages are all done. */
+  async cleanupStaleSessions() {
+    const activeSessions = await prisma.workSession.findMany({
+      where: { status: "ACTIVE" },
+      include: { messages: true },
+    });
+
+    let completed = 0;
+    let failed = 0;
+
+    for (const session of activeSessions) {
+      if (session.messages.length === 0) continue;
+
+      const hasPending = session.messages.some(
+        (m) => m.status === "PENDING" || m.status === "PROCESSING"
+      );
+      if (hasPending) continue;
+
+      const hasFailed = session.messages.some((m) => m.status === "FAILED");
+      const newStatus = hasFailed ? "FAILED" : "COMPLETED";
+
+      await prisma.workSession.update({
+        where: { id: session.id },
+        data: { status: newStatus },
+      });
+
+      if (hasFailed) failed++;
+      else completed++;
+    }
+
+    return { completed, failed, total: completed + failed };
   }
 }
