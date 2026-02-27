@@ -88,7 +88,9 @@ done
 PROMPT=$(cat '${promptFile}')
 # Redirect stdin from /dev/null to prevent CLI blocking on pipe input
 # Tool permissions are pre-approved via ~/.claude/settings.json (written by entrypoint.sh)
-exec claude --print "$PROMPT" --output-format json --dangerously-skip-permissions${resumeFlag} < /dev/null
+# NOTE: --dangerously-skip-permissions crashes CLI in --print mode (exit 1, empty output)
+# Use --permission-mode bypassPermissions instead
+exec claude --print "$PROMPT" --output-format json --permission-mode bypassPermissions${resumeFlag} < /dev/null
 `, "utf-8");
   await execFileAsync("chmod", ["+x", wrapperScript]);
 

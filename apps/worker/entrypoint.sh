@@ -82,12 +82,18 @@ settings.permissions.allow = [
   'Grep(*)',
   'WebFetch(*)',
   'WebSearch(*)',
-  'mcp__*(*)'
+  'mcp__*(*)',
+  'Task(*)',
+  'NotebookEdit(*)'
 ];
+
+// Skip the confirmation prompt for dangerous mode
+settings.skipDangerousModePermissionPrompt = true;
 
 fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
 fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 console.log('[C.O.D.E.] Configured tool permissions in ~/.claude/settings.json');
+console.log('[C.O.D.E.] Settings:', JSON.stringify(settings, null, 2));
 "
 
 # Verify CLI auth
