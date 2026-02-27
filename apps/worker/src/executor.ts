@@ -1,11 +1,11 @@
-import { execFile } from "child_process";
+import { exec } from "child_process";
 import { promisify } from "util";
 import { writeFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
 import type { Notifier } from "./notifier.js";
 
-const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 interface WorkMessage {
   id: string;
@@ -103,15 +103,20 @@ export async function executeMessage(
     const childEnv = { ...process.env };
     delete childEnv.ANTHROPIC_API_KEY;
 
-    // Debug: log what we're about to run
-    console.error(`[C.O.D.E.] Exec: claude ${args.map(a => a.length > 80 ? a.slice(0, 80) + "..." : a).join(" ")}`);
+    // Build shell command — execFile (no shell) causes Claude CLI to return
+    // empty stdout. Using exec (with shell) matches the behavior of running
+    // the command via bash, which works correctly with OAuth credentials.
+    const shellArgs = args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ");
+    const shellCmd = `claude ${shellArgs}`;
+
+    console.error(`[C.O.D.E.] Exec: ${shellCmd.slice(0, 200)}...`);
     console.error(`[C.O.D.E.] CWD: ${cwd}, HOME: ${childEnv.HOME}, HAS_APIKEY: ${!!childEnv.ANTHROPIC_API_KEY}`);
 
     let stdout: string;
     let stderr: string;
 
     try {
-      const result = await execFileAsync("claude", args, {
+      const result = await execAsync(shellCmd, {
         timeout: WORKER_EXECUTION_TIMEOUT,
         cwd,
         maxBuffer: 50 * 1024 * 1024, // 50MB
@@ -121,9 +126,6 @@ export async function executeMessage(
       stderr = result.stderr;
       console.error(`[C.O.D.E.] Claude CLI exited normally, stdout length: ${stdout.length}`);
     } catch (execErr: unknown) {
-      // execFile throws on non-zero exit — but Claude CLI exits 1 even on
-      // successful runs that return error results in JSON. Pull stdout from
-      // the error object so we can still parse the response.
       const e = execErr as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
 
       if (e.killed) {
@@ -132,10 +134,7 @@ export async function executeMessage(
 
       stdout = e.stdout || "";
       stderr = e.stderr || "";
-      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}, stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
-      if (e.message) {
-        console.error(`[C.O.D.E.] Error message: ${e.message.slice(0, 300)}`);
-      }
+      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}, stdout length: ${stdout.length}`);
     }
 
     if (stderr) {
