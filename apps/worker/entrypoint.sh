@@ -54,11 +54,20 @@ if (process.env.ZAPIER_MCP_TOKEN) {
 
 if (Object.keys(mcpServers).length > 0) {
   config.mcpServers = { ...(config.mcpServers || {}), ...mcpServers };
-  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+}
+
+// Enable Remote Control for all sessions so workers can be monitored from phone/browser
+config.remoteControlAtStartup = true;
+config.remoteDialogSeen = true;
+
+fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+
+if (Object.keys(mcpServers).length > 0) {
   console.log('[C.O.D.E.] Configured MCP servers in ~/.claude.json:', Object.keys(mcpServers).join(', '));
 } else {
   console.log('[C.O.D.E.] Warning: No MCP server credentials found — skipping MCP config');
 }
+console.log('[C.O.D.E.] Remote Control enabled for all sessions');
 "
 
 # Configure tool permissions — allow all tools since the worker is non-interactive.
