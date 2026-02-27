@@ -91,14 +91,10 @@ export async function executeMessage(
       args.push("--resume", session.claudeSessionId);
     }
 
-    // NOTE: --mcp-config is disabled for now. The Streamable HTTP MCP
-    // connections (ATLAS, Zapier) cause the CLI to hang during startup,
-    // resulting in empty output after timeout. The worker can still
-    // function without MCP access — it just can't call ATLAS tools.
-    // TODO: Re-enable once MCP connection timeouts are resolved.
-    // if (cleanupConfig) {
-    //   args.push("--mcp-config", join(mcpConfigDir, "mcp-config.json"));
-    // }
+    // NOTE: --mcp-config is not used. Any MCP config flag (even with
+    // --strict-mcp-config and empty servers) causes the CLI to hang
+    // during MCP initialization in headless/--print mode.
+    // TODO: Investigate CLI fix or use Agent SDK for MCP access.
 
     const mode = session.claudeSessionId ? "Resuming session" : "Starting new session";
     await notifier.send(`${mode} — executing with Claude Code CLI...`, "NORMAL");
