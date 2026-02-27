@@ -82,6 +82,9 @@ export async function executeMessage(
         settingSources: ["user"],
         env,
         abortController,
+        stderr: (data: string) => {
+          console.error(`[C.O.D.E.] SDK stderr: ${data.trim()}`);
+        },
         ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
       },
     });
