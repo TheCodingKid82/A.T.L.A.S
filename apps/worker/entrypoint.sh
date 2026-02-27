@@ -21,5 +21,13 @@ CREDS
   echo "[C.O.D.E.] Claude Code CLI credentials configured"
 fi
 
+# Diagnostics
+echo "[C.O.D.E.] HOME=$HOME"
+echo "[C.O.D.E.] Claude Code CLI version:"
+claude --version 2>&1 || echo "[C.O.D.E.] claude --version failed"
+echo "[C.O.D.E.] Credentials file exists: $(test -f ~/.claude/.credentials.json && echo YES || echo NO)"
+echo "[C.O.D.E.] Testing CLI auth (quick hello)..."
+claude --print "say hello" --output-format text 2>&1 | head -20 || echo "[C.O.D.E.] CLI test exited with code $?"
+
 # Start the worker
 exec node apps/worker/dist/worker.js
