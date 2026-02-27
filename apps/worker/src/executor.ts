@@ -91,7 +91,7 @@ PROMPT=$(cat '${promptFile}')
 # NOTE: ALL permission flags crash CLI in --print mode (exit 1, empty output):
 #   --dangerously-skip-permissions, --permission-mode bypassPermissions, etc.
 # Rely solely on settings.json permissions.allow patterns instead.
-exec claude --print "$PROMPT" --output-format json${resumeFlag} < /dev/null
+exec claude --print "$PROMPT" --output-format json --model opus${resumeFlag} < /dev/null
 `, "utf-8");
   await execFileAsync("chmod", ["+x", wrapperScript]);
 
@@ -220,7 +220,16 @@ ${metadataStr}
 ## Available Tools & CLIs
 
 **MCP Servers:**
-- **atlas** — A.T.L.A.S. tools for memory, messaging, documents, browser automation, task management, and more
+- **atlas** — A.T.L.A.S. tools for memory, messaging, documents, task management, and more
+  - **Browser tools** (persistent profile — stays logged in across sessions):
+    - \`atlas_browser_open\` — Navigate to a URL
+    - \`atlas_browser_snapshot\` — Get accessibility snapshot of current page
+    - \`atlas_browser_click\` — Click an element (CSS selector or accessibility ref)
+    - \`atlas_browser_fill\` — Fill a form field
+    - \`atlas_browser_screenshot\` — Take a screenshot
+    - \`atlas_browser_get_text\` — Extract text from an element
+    - \`atlas_browser_execute\` — Execute JavaScript on the page
+    - \`atlas_browser_state_save\` / \`atlas_browser_state_load\` — Save/restore browser state (cookies, storage)
 - **zapier** — Zapier automation tools for cross-app workflows${zapierSection}
 
 **CLIs:**
