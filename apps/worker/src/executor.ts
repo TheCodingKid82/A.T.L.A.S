@@ -99,13 +99,18 @@ export async function executeMessage(
     const mode = session.claudeSessionId ? "Resuming session" : "Starting new session";
     await notifier.send(`${mode} — executing with Claude Code CLI...`, "NORMAL");
 
+    // Exclude ANTHROPIC_API_KEY from child env — we use OAuth credentials
+    // written to ~/.claude/.credentials.json by entrypoint.sh instead.
+    // Having ANTHROPIC_API_KEY set (especially with an OAuth token value)
+    // causes the CLI to fail silently.
+    const childEnv = { ...process.env };
+    delete childEnv.ANTHROPIC_API_KEY;
+
     const { stdout, stderr } = await execFileAsync("claude", args, {
       timeout: WORKER_EXECUTION_TIMEOUT,
       cwd,
       maxBuffer: 50 * 1024 * 1024, // 50MB
-      env: {
-        ...process.env,
-      },
+      env: childEnv,
     });
 
     if (stderr) {
@@ -116,7 +121,8 @@ export async function executeMessage(
 
     if (!stdout.trim()) {
       console.error("[C.O.D.E.] Claude CLI returned empty stdout");
-      throw new Error("Claude Code CLI returned empty response. Check ANTHROPIC_API_KEY and CLI version.");
+      console.error("[C.O.D.E.] Claude CLI stderr (full):", stderr || "(empty)");
+      throw new Error("Claude Code CLI returned empty response. Check OAuth credentials and CLI version.");
     }
 
     let parsed: unknown;
