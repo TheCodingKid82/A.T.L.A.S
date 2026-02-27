@@ -106,11 +106,27 @@ export async function executeMessage(
 
     console.error(`[C.O.D.E.] Exec: claude --print <prompt> --output-format json ${session.claudeSessionId ? "--resume " + session.claudeSessionId : "(new)"}`);
 
+    // Write prompt to a temp file — avoids shell escaping issues with long prompts
+    const promptFile = join(cwd, ".claude-prompt-" + Date.now() + ".txt");
+    await writeFile(promptFile, prompt, "utf-8");
+
+    // Use a wrapper script because Claude CLI hangs when spawned directly
+    // from Node.js execFile (likely due to inherited stdio/IPC file descriptors).
+    // Running via bash works reliably.
+    const wrapperScript = join(cwd, ".claude-run-" + Date.now() + ".sh");
+    const resumeFlag = session.claudeSessionId ? ` --resume '${session.claudeSessionId}'` : "";
+    await writeFile(wrapperScript, `#!/bin/bash
+unset ANTHROPIC_API_KEY
+PROMPT=$(cat '${promptFile}')
+exec claude --print "$PROMPT" --output-format json${resumeFlag}
+`, "utf-8");
+    await execFileAsync("chmod", ["+x", wrapperScript]);
+
     let stdout: string;
     let stderr: string;
 
     try {
-      const result = await execFileAsync("claude", args, {
+      const result = await execFileAsync(wrapperScript, [], {
         timeout: WORKER_EXECUTION_TIMEOUT,
         cwd,
         maxBuffer: 50 * 1024 * 1024, // 50MB
@@ -125,10 +141,13 @@ export async function executeMessage(
         throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
       }
 
-      // CLI exits 1 on errors but still outputs valid JSON
       stdout = e.stdout || "";
       stderr = e.stderr || "";
       console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}`);
+    } finally {
+      // Clean up temp files
+      await rm(promptFile, { force: true }).catch(() => {});
+      await rm(wrapperScript, { force: true }).catch(() => {});
     }
 
     if (stderr) {
