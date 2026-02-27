@@ -87,7 +87,7 @@ for fd in $(seq 3 20); do
 done
 PROMPT=$(cat '${promptFile}')
 # Redirect stdin from /dev/null to prevent CLI blocking on pipe input
-exec claude --print "$PROMPT" --output-format json${resumeFlag} < /dev/null
+exec claude --print "$PROMPT" --output-format json --dangerouslySkipPermissions${resumeFlag} < /dev/null
 `, "utf-8");
   await execFileAsync("chmod", ["+x", wrapperScript]);
 
