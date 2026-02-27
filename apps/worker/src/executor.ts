@@ -81,15 +81,14 @@ export async function executeMessage(
   const resumeFlag = session.claudeSessionId ? ` --resume '${session.claudeSessionId}'` : "";
   await writeFile(wrapperScript, `#!/bin/bash
 unset ANTHROPIC_API_KEY
-# Skip permission prompts — worker is non-interactive, no human to approve
-export CLAUDE_DANGEROUSLY_SKIP_PERMISSIONS=true
 # Close inherited file descriptors from Node.js (IPC channel, etc.)
 for fd in $(seq 3 20); do
   eval "exec \${fd}>&-" 2>/dev/null || true
 done
 PROMPT=$(cat '${promptFile}')
 # Redirect stdin from /dev/null to prevent CLI blocking on pipe input
-exec claude --print "$PROMPT" --output-format json${resumeFlag} < /dev/null
+# Tool permissions are pre-approved via ~/.claude/settings.json (written by entrypoint.sh)
+exec claude --print "$PROMPT" --output-format json --dangerously-skip-permissions${resumeFlag} < /dev/null
 `, "utf-8");
   await execFileAsync("chmod", ["+x", wrapperScript]);
 

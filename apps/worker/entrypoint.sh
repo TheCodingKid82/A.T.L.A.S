@@ -61,6 +61,35 @@ if (Object.keys(mcpServers).length > 0) {
 }
 "
 
+# Configure tool permissions — allow all tools since the worker is non-interactive.
+# This is written to the persistent volume so it survives redeploys.
+node -e "
+const fs = require('fs');
+const path = require('path');
+const settingsPath = path.join(require('os').homedir(), '.claude', 'settings.json');
+
+let settings = {};
+try { settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')); } catch {}
+
+// Allow all tool patterns for the worker
+settings.permissions = settings.permissions || {};
+settings.permissions.allow = [
+  'Bash(*)',
+  'Read(*)',
+  'Write(*)',
+  'Edit(*)',
+  'Glob(*)',
+  'Grep(*)',
+  'WebFetch(*)',
+  'WebSearch(*)',
+  'mcp__*(*)'
+];
+
+fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+console.log('[C.O.D.E.] Configured tool permissions in ~/.claude/settings.json');
+"
+
 # Verify CLI auth
 if [ -n "$GH_TOKEN" ]; then
   echo "[C.O.D.E.] GitHub CLI auth: GH_TOKEN is set"
