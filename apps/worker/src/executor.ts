@@ -84,7 +84,6 @@ export async function executeMessage(
       "--print",
       prompt,
       "--output-format", "json",
-      "--dangerously-skip-permissions",
     ];
 
     // Resume existing Claude session if available
