@@ -1,11 +1,11 @@
-import { exec } from "child_process";
+import { execFile } from "child_process";
 import { promisify } from "util";
 import { writeFile, mkdir, rm } from "fs/promises";
 import { join } from "path";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
 import type { Notifier } from "./notifier.js";
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 interface WorkMessage {
   id: string;
@@ -91,9 +91,14 @@ export async function executeMessage(
       args.push("--resume", session.claudeSessionId);
     }
 
-    if (cleanupConfig) {
-      args.push("--mcp-config", join(mcpConfigDir, "mcp-config.json"));
-    }
+    // NOTE: --mcp-config is disabled for now. The Streamable HTTP MCP
+    // connections (ATLAS, Zapier) cause the CLI to hang during startup,
+    // resulting in empty output after timeout. The worker can still
+    // function without MCP access — it just can't call ATLAS tools.
+    // TODO: Re-enable once MCP connection timeouts are resolved.
+    // if (cleanupConfig) {
+    //   args.push("--mcp-config", join(mcpConfigDir, "mcp-config.json"));
+    // }
 
     const mode = session.claudeSessionId ? "Resuming session" : "Starting new session";
     await notifier.send(`${mode} — executing with Claude Code CLI...`, "NORMAL");
@@ -103,20 +108,13 @@ export async function executeMessage(
     const childEnv = { ...process.env };
     delete childEnv.ANTHROPIC_API_KEY;
 
-    // Build shell command — execFile (no shell) causes Claude CLI to return
-    // empty stdout. Using exec (with shell) matches the behavior of running
-    // the command via bash, which works correctly with OAuth credentials.
-    const shellArgs = args.map(a => `'${a.replace(/'/g, "'\\''")}'`).join(" ");
-    const shellCmd = `claude ${shellArgs}`;
-
-    console.error(`[C.O.D.E.] Exec: ${shellCmd.slice(0, 200)}...`);
-    console.error(`[C.O.D.E.] CWD: ${cwd}, HOME: ${childEnv.HOME}, HAS_APIKEY: ${!!childEnv.ANTHROPIC_API_KEY}`);
+    console.error(`[C.O.D.E.] Exec: claude --print <prompt> --output-format json ${session.claudeSessionId ? "--resume " + session.claudeSessionId : "(new)"}`);
 
     let stdout: string;
     let stderr: string;
 
     try {
-      const result = await execAsync(shellCmd, {
+      const result = await execFileAsync("claude", args, {
         timeout: WORKER_EXECUTION_TIMEOUT,
         cwd,
         maxBuffer: 50 * 1024 * 1024, // 50MB
@@ -124,7 +122,6 @@ export async function executeMessage(
       });
       stdout = result.stdout;
       stderr = result.stderr;
-      console.error(`[C.O.D.E.] Claude CLI exited normally, stdout length: ${stdout.length}`);
     } catch (execErr: unknown) {
       const e = execErr as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
 
@@ -132,9 +129,10 @@ export async function executeMessage(
         throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
       }
 
+      // CLI exits 1 on errors but still outputs valid JSON
       stdout = e.stdout || "";
       stderr = e.stderr || "";
-      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}, stdout length: ${stdout.length}`);
+      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}`);
     }
 
     if (stderr) {
