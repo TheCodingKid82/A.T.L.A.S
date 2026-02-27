@@ -60,6 +60,10 @@ if (Object.keys(mcpServers).length > 0) {
 config.remoteControlAtStartup = true;
 config.remoteDialogSeen = true;
 
+// Enable bridge daemon feature flag for 'claude remote-control'
+config.cachedGrowthBookFeatures = config.cachedGrowthBookFeatures || {};
+config.cachedGrowthBookFeatures.tengu_ccr_bridge = true;
+
 fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
 if (Object.keys(mcpServers).length > 0) {
@@ -120,5 +124,22 @@ fi
 
 echo "[C.O.D.E.] Claude Code CLI version: $(claude --version 2>&1 || echo 'unknown')"
 
-# Start the worker
-exec node apps/worker/dist/worker.js
+# Start Remote Control bridge daemon in background
+# This registers the worker as a "bridge environment" with Anthropic's cloud,
+# allowing interactive sessions from claude.ai/code or the Claude mobile app.
+echo "[C.O.D.E.] Starting Remote Control bridge daemon..."
+claude remote-control > /tmp/remote-control.log 2>&1 &
+RC_PID=$!
+echo "[C.O.D.E.] Remote Control bridge started (PID: $RC_PID)"
+
+# Give it a few seconds to register, then check if it's still running
+sleep 3
+if kill -0 $RC_PID 2>/dev/null; then
+  echo "[C.O.D.E.] Remote Control bridge is running"
+else
+  echo "[C.O.D.E.] Warning: Remote Control bridge exited — check /tmp/remote-control.log"
+  cat /tmp/remote-control.log
+fi
+
+# Start the worker (not exec — keep bridge daemon alive)
+node apps/worker/dist/worker.js
