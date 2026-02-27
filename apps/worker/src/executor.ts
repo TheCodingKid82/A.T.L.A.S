@@ -105,12 +105,32 @@ export async function executeMessage(
     const childEnv = { ...process.env };
     delete childEnv.ANTHROPIC_API_KEY;
 
-    const { stdout, stderr } = await execFileAsync("claude", args, {
-      timeout: WORKER_EXECUTION_TIMEOUT,
-      cwd,
-      maxBuffer: 50 * 1024 * 1024, // 50MB
-      env: childEnv,
-    });
+    let stdout: string;
+    let stderr: string;
+
+    try {
+      const result = await execFileAsync("claude", args, {
+        timeout: WORKER_EXECUTION_TIMEOUT,
+        cwd,
+        maxBuffer: 50 * 1024 * 1024, // 50MB
+        env: childEnv,
+      });
+      stdout = result.stdout;
+      stderr = result.stderr;
+    } catch (execErr: unknown) {
+      // execFile throws on non-zero exit — but Claude CLI exits 1 even on
+      // successful runs that return error results in JSON. Pull stdout from
+      // the error object so we can still parse the response.
+      const e = execErr as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
+
+      if (e.killed) {
+        throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
+      }
+
+      stdout = e.stdout || "";
+      stderr = e.stderr || "";
+      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}`);
+    }
 
     if (stderr) {
       console.error("[C.O.D.E.] Claude CLI stderr:", stderr.slice(0, 500));
@@ -131,6 +151,13 @@ export async function executeMessage(
       parsed = { rawOutput: stdout.trim() };
     }
 
+    // Check for CLI-level errors (auth failures, etc.)
+    if (parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).is_error === true) {
+      const errResult = (parsed as Record<string, unknown>).result as string;
+      console.error("[C.O.D.E.] Claude CLI returned error:", errResult);
+      throw new Error(`Claude Code CLI error: ${errResult}`);
+    }
+
     // Extract session ID if available
     const sessionId =
       parsed && typeof parsed === "object" && parsed !== null && "session_id" in parsed
@@ -140,15 +167,6 @@ export async function executeMessage(
     const summary = extractSummary(parsed);
 
     return { summary, output: parsed, sessionId, duration };
-  } catch (error: unknown) {
-    const duration = Date.now() - start;
-    const err = error as { killed?: boolean; message?: string };
-
-    if (err.killed) {
-      throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
-    }
-
-    throw new Error(`Claude Code execution failed (${duration}ms): ${err.message || "Unknown error"}`);
   } finally {
     // Clean up temporary MCP config
     if (cleanupConfig) {
