@@ -258,9 +258,14 @@ export default function WorkRequestsPage() {
                                   {new Date(msg.createdAt).toLocaleTimeString()}
                                 </span>
                               </div>
-                              <p className="text-sm whitespace-pre-wrap">
-                                {msg.content}
-                              </p>
+                              <details className="mt-1">
+                                <summary className="text-xs text-atlas-text-muted cursor-pointer hover:text-atlas-text">
+                                  View prompt
+                                </summary>
+                                <p className="text-sm whitespace-pre-wrap mt-1">
+                                  {msg.content}
+                                </p>
+                              </details>
                               {msg.errorMessage && (
                                 <p className="text-xs text-red-400 mt-1">
                                   Error: {msg.errorMessage}
