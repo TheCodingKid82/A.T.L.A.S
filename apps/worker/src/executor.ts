@@ -1,11 +1,6 @@
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { writeFile, rm } from "fs/promises";
-import { join } from "path";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
 import type { Notifier } from "./notifier.js";
-
-const execFileAsync = promisify(execFile);
 
 interface WorkMessage {
   id: string;
@@ -41,123 +36,87 @@ export async function executeMessage(
   const prompt = await buildPrompt(message, session);
   const cwd = session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
 
-  // MCP servers (ATLAS, Zapier) are configured in ~/.claude.json by entrypoint.sh.
-  // GH_TOKEN and RAILWAY_API_TOKEN are inherited via { ...process.env }.
-
-  const args: string[] = [
-    "--print",
-    prompt,
-    "--output-format", "json",
-  ];
-
-  // Resume existing Claude session if available
-  if (session.claudeSessionId) {
-    args.push("--resume", session.claudeSessionId);
+  // Build MCP server config for programmatic connection
+  const mcpServers: Record<string, unknown> = {};
+  if (process.env.ATLAS_MCP_URL && process.env.WORKER_API_KEY) {
+    mcpServers.atlas = {
+      type: "http",
+      url: process.env.ATLAS_MCP_URL,
+      headers: { Authorization: `Bearer ${process.env.WORKER_API_KEY}` },
+    };
+  }
+  if (process.env.ZAPIER_MCP_TOKEN) {
+    mcpServers.zapier = {
+      type: "http",
+      url: "https://mcp.zapier.com/api/v1/connect",
+      headers: { Authorization: `Bearer ${process.env.ZAPIER_MCP_TOKEN}` },
+    };
   }
 
-  // NOTE: --mcp-config is not used. Any MCP config flag (even with
-  // --strict-mcp-config and empty servers) causes the CLI to hang
-  // during MCP initialization in headless/--print mode.
-  // MCP servers are configured in ~/.claude.json by entrypoint.sh instead.
+  // Exclude ANTHROPIC_API_KEY — we use OAuth credentials
+  const env = { ...process.env };
+  delete env.ANTHROPIC_API_KEY;
 
   const mode = session.claudeSessionId ? "Resuming session" : "Starting new session";
-  await notifier.send(`${mode} — executing with Claude Code CLI...`, "NORMAL");
+  await notifier.send(`${mode} — executing with Claude Agent SDK...`, "NORMAL");
 
-  // Exclude ANTHROPIC_API_KEY from child env — we use OAuth credentials
-  // stored in ~/.claude/.credentials.json (persistent volume).
-  const childEnv = { ...process.env };
-  delete childEnv.ANTHROPIC_API_KEY;
+  console.error(`[C.O.D.E.] SDK query: ${session.claudeSessionId ? "resume " + session.claudeSessionId : "(new session)"}, cwd=${cwd}, mcpServers=[${Object.keys(mcpServers).join(", ")}]`);
 
-  console.error(`[C.O.D.E.] Exec: claude --print <prompt> --output-format json ${session.claudeSessionId ? "--resume " + session.claudeSessionId : "(new)"}`);
+  // Abort controller for timeout
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), WORKER_EXECUTION_TIMEOUT);
 
-  // Write prompt to a temp file — avoids shell escaping issues with long prompts
-  const promptFile = join(cwd, ".claude-prompt-" + Date.now() + ".txt");
-  await writeFile(promptFile, prompt, "utf-8");
-
-  // Use a wrapper script because Claude CLI hangs when spawned directly
-  // from Node.js execFile (likely due to inherited stdio/IPC file descriptors).
-  // Running via bash works reliably.
-  const wrapperScript = join(cwd, ".claude-run-" + Date.now() + ".sh");
-  const resumeFlag = session.claudeSessionId ? ` --resume '${session.claudeSessionId}'` : "";
-  await writeFile(wrapperScript, `#!/bin/bash
-unset ANTHROPIC_API_KEY
-# Close inherited file descriptors from Node.js (IPC channel, etc.)
-for fd in $(seq 3 20); do
-  eval "exec \${fd}>&-" 2>/dev/null || true
-done
-PROMPT=$(cat '${promptFile}')
-# Redirect stdin from /dev/null to prevent CLI blocking on pipe input
-# Tool permissions are pre-approved via ~/.claude/settings.json (written by entrypoint.sh)
-# NOTE: ALL permission flags crash CLI in --print mode (exit 1, empty output):
-#   --dangerously-skip-permissions, --permission-mode bypassPermissions, etc.
-# Rely solely on settings.json permissions.allow patterns instead.
-exec claude --print "$PROMPT" --output-format json --model opus${resumeFlag} < /dev/null
-`, "utf-8");
-  await execFileAsync("chmod", ["+x", wrapperScript]);
-
-  let stdout: string;
-  let stderr: string;
+  let sessionId: string | null = null;
+  let resultText: string | null = null;
+  let resultOutput: unknown = null;
 
   try {
-    const result = await execFileAsync(wrapperScript, [], {
-      timeout: WORKER_EXECUTION_TIMEOUT,
-      cwd,
-      maxBuffer: 50 * 1024 * 1024, // 50MB
-      env: childEnv,
+    const conversation = query({
+      prompt,
+      options: {
+        cwd,
+        model: "claude-opus-4-6",
+        mcpServers,
+        permissionMode: "bypassPermissions",
+        allowDangerouslySkipPermissions: true,
+        settingSources: ["user"],
+        env,
+        abortController,
+        ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
+      },
     });
-    stdout = result.stdout;
-    stderr = result.stderr;
-  } catch (execErr: unknown) {
-    const e = execErr as { killed?: boolean; stdout?: string; stderr?: string; code?: number; message?: string };
 
-    if (e.killed) {
+    for await (const event of conversation) {
+      // Capture session ID from init message
+      if (event.type === "system" && (event as Record<string, unknown>).subtype === "init") {
+        sessionId = (event as Record<string, unknown>).session_id as string ?? null;
+        console.error(`[C.O.D.E.] Session ID: ${sessionId}`);
+      }
+
+      // Capture result
+      if ("result" in event) {
+        resultText = (event as Record<string, unknown>).result as string ?? null;
+        resultOutput = event;
+      }
+    }
+  } catch (err: unknown) {
+    if (abortController.signal.aborted) {
       throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
     }
-
-    stdout = e.stdout || "";
-    stderr = e.stderr || "";
-    console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}`);
+    throw err;
   } finally {
-    // Clean up temp files
-    await rm(promptFile, { force: true }).catch(() => {});
-    await rm(wrapperScript, { force: true }).catch(() => {});
-  }
-
-  if (stderr) {
-    console.error("[C.O.D.E.] Claude CLI stderr:", stderr.slice(0, 500));
+    clearTimeout(timeout);
   }
 
   const duration = Date.now() - start;
 
-  if (!stdout.trim()) {
-    console.error("[C.O.D.E.] Claude CLI returned empty stdout");
-    console.error("[C.O.D.E.] Claude CLI stderr (full):", stderr || "(empty)");
-    throw new Error("Claude Code CLI returned empty response. Check OAuth credentials and CLI version.");
+  if (!resultText) {
+    throw new Error("Claude Agent SDK returned no result. Check OAuth credentials and CLI version.");
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    parsed = { rawOutput: stdout.trim() };
-  }
+  const summary = resultText.length > 500 ? resultText.slice(0, 500) : resultText;
 
-  // Check for CLI-level errors (auth failures, etc.)
-  if (parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).is_error === true) {
-    const errResult = (parsed as Record<string, unknown>).result as string;
-    console.error("[C.O.D.E.] Claude CLI returned error:", errResult);
-    throw new Error(`Claude Code CLI error: ${errResult}`);
-  }
-
-  // Extract session ID if available
-  const sessionId =
-    parsed && typeof parsed === "object" && parsed !== null && "session_id" in parsed
-      ? (parsed as Record<string, unknown>).session_id as string
-      : null;
-
-  const summary = extractSummary(parsed);
-
-  return { summary, output: parsed, sessionId, duration };
+  return { summary, output: resultOutput, sessionId, duration };
 }
 
 /** Discover available Zapier tools by querying the MCP tools/list endpoint. */
@@ -245,26 +204,4 @@ ${metadataStr}
 4. **Provide a clear summary** of what was accomplished when done.
 
 Execute this work request thoroughly.`;
-}
-
-function extractSummary(parsed: unknown): string {
-  if (!parsed || typeof parsed !== "object") return "Work completed.";
-
-  const obj = parsed as Record<string, unknown>;
-
-  if (typeof obj.result === "string") return obj.result.slice(0, 500);
-
-  if (obj.content) {
-    if (typeof obj.content === "string") return obj.content.slice(0, 500);
-    if (Array.isArray(obj.content)) {
-      const textBlock = obj.content.find(
-        (c: unknown) => c && typeof c === "object" && (c as Record<string, unknown>).type === "text"
-      );
-      if (textBlock && typeof (textBlock as Record<string, unknown>).text === "string") {
-        return ((textBlock as Record<string, unknown>).text as string).slice(0, 500);
-      }
-    }
-  }
-
-  return "Work completed. See full result for details.";
 }

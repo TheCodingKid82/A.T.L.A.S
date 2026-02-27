@@ -9,6 +9,7 @@
     "start": "node dist/worker.js"
   },
   "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.62",
     "@atlas/database": "workspace:*",
     "@atlas/services": "workspace:*",
     "@atlas/shared": "workspace:*"
