@@ -7,3 +7,4 @@ export { BrowserService } from "./browser-service";
 export { McpRegistryService } from "./mcp-registry-service";
 export { CredentialService } from "./credential-service";
 export { ClaudeCodeService } from "./claude-code-service";
+export { WorkSessionService } from "./work-session-service";

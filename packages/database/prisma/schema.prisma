@@ -30,6 +30,8 @@ model Agent {
   browserActions  BrowserAction[]
   claudeCodeActions ClaudeCodeAction[]
   auditLogs       AuditLog[]
+  workSessionsOwned    WorkSession[] @relation("SessionOwner")
+  workSessionsWorked   WorkSession[] @relation("SessionWorker")
 
   @@map("agents")
 }
@@ -285,6 +287,73 @@ model MemoryEntry {
   createdAt        DateTime @default(now()) @map("created_at")
 
   @@map("memory_entries")
+}
+
+// ─── Work Sessions ──────────────────────────────────────
+
+model WorkSession {
+  id               String             @id @default(cuid())
+  requesterId      String             @map("requester_id")
+  workerId         String?            @map("worker_id")
+  type             WorkSessionType    @default(GENERAL)
+  title            String
+  priority         TaskPriority       @default(MEDIUM)
+  status           WorkSessionStatus  @default(ACTIVE)
+  workingDirectory String?            @map("working_directory")
+  claudeSessionId  String?            @map("claude_session_id")
+  metadata         Json?
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  requester        Agent              @relation("SessionOwner", fields: [requesterId], references: [id])
+  worker           Agent?             @relation("SessionWorker", fields: [workerId], references: [id])
+  messages         WorkMessage[]
+
+  @@map("work_sessions")
+}
+
+model WorkMessage {
+  id            String             @id @default(cuid())
+  sessionId     String             @map("session_id")
+  role          WorkMessageRole    @default(USER)
+  content       String
+  status        WorkMessageStatus  @default(PENDING)
+  result        Json?
+  duration      Int?
+  errorMessage  String?            @map("error_message")
+  createdAt     DateTime           @default(now()) @map("created_at")
+
+  session       WorkSession        @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("work_messages")
+}
+
+enum WorkSessionStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum WorkSessionType {
+  CODE
+  RESEARCH
+  GITHUB
+  BROWSER
+  GENERAL
+}
+
+enum WorkMessageRole {
+  USER
+  WORKER
+}
+
+enum WorkMessageStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
 }
 
 // ─── Audit ────────────────────────────────────────────────

@@ -12,5 +12,20 @@ services:
     volumes:
       - atlas_data:/var/lib/postgresql/data
 
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    container_name: atlas-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://atlas:atlas_dev_password@postgres:5432/atlas
+      ATLAS_MCP_URL: http://mcp-server:3001/mcp
+      WORKER_API_KEY: ${WORKER_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      DEFAULT_WORKING_DIR: /tmp
+    depends_on:
+      - postgres
+
 volumes:
   atlas_data:

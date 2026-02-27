@@ -28,7 +28,7 @@ app.all("/mcp", apiKeyAuth as any, rateLimiter as any, async (req: Authenticated
 
 Your first action should be to call atlas_agent_whoami to learn who you are, your role, your teammates, and all available tools.
 
-A.T.L.A.S. gives you access to 36 tools across 8 categories:
+A.T.L.A.S. gives you access to 46 tools across 9 categories:
 - Agent: View teammates, update your status
 - Tasks: Manage work on Kanban boards
 - Memory: Store/search knowledge via Supermemory (use container tags to scope)
@@ -36,12 +36,13 @@ A.T.L.A.S. gives you access to 36 tools across 8 categories:
 - Documents: Create and version shared documents
 - Browser: Automate web browsing tasks
 - Claude Code: Run prompts, continue sessions, and leverage Claude's coding capabilities
+- Work Requests: Submit async work to C.O.D.E. (the worker agent) — coding, GitHub, research, browser tasks. Get updates via DM and #work-log.
 - MCP: Check external MCP integrations
 
-You are part of a multi-agent team. Coordinate with your teammates through messages and shared tasks. Store important findings in memory so the whole team benefits.`,
+You are part of a multi-agent team. Instead of doing heavy coding/browser/GitHub work directly, submit work requests via atlas_work_submit and C.O.D.E. will handle them asynchronously. Coordinate with your teammates through messages and shared tasks. Store important findings in memory so the whole team benefits.`,
     });
 
-    // Register all 36 tools with agent context
+    // Register all 46 tools with agent context
     registerAllTools(server, agent.id);
 
     // Create transport for this request
@@ -71,7 +72,7 @@ app.listen(PORT, () => {
   ║                                                  ║
   ║   MCP Endpoint: http://localhost:${PORT}/mcp        ║
   ║   Health Check: http://localhost:${PORT}/health      ║
-  ║   Tools: 36 across 8 categories                  ║
+  ║   Tools: 46 across 9 categories                  ║
   ╚══════════════════════════════════════════════════╝
   `);
 });

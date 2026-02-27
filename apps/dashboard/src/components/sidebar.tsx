@@ -11,12 +11,14 @@ import {
   Globe,
   Plug,
   MessageSquare,
+  Hammer,
 } from "lucide-react";
 
 const navItems = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/boards", label: "Boards", icon: Kanban },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/work-requests", label: "Work Queue", icon: Hammer },
   { href: "/memory", label: "Memory", icon: Brain },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/browser", label: "Browser", icon: Globe },

@@ -7,3 +7,4 @@ export * from "./browser";
 export * from "./mcp";
 export * from "./credential";
 export * from "./claude-code";
+export * from "./work-request";

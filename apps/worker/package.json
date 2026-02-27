@@ -1,0 +1,22 @@
+{
+  "name": "@atlas/worker",
+  "version": "0.1.0",
+  "private": true,
+  "main": "src/worker.ts",
+  "scripts": {
+    "dev": "tsx watch src/worker.ts",
+    "build": "esbuild src/worker.ts --bundle --platform=node --target=node20 --outfile=dist/worker.js --packages=external",
+    "start": "node dist/worker.js"
+  },
+  "dependencies": {
+    "@atlas/database": "workspace:*",
+    "@atlas/services": "workspace:*",
+    "@atlas/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "esbuild": "^0.27.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.5.0"
+  }
+}

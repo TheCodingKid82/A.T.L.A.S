@@ -3,15 +3,19 @@
 import { useAgents } from "@/hooks/use-agents";
 import { useBoards } from "@/hooks/use-boards";
 import { useChannels } from "@/hooks/use-messages";
+import { useWorkSessions } from "@/hooks/use-work-requests";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatusDot } from "@/components/ui/status-dot";
-import { Bot, Kanban, MessageSquare, Brain } from "lucide-react";
+import { Bot, Kanban, MessageSquare, Brain, Hammer } from "lucide-react";
 
 export default function DashboardPage() {
   const { data: agents } = useAgents();
   const { data: boards } = useBoards();
   const { data: channels } = useChannels();
+  const { data: workSessions } = useWorkSessions();
+
+  const activeWork = workSessions?.filter((s: any) => s.status === "ACTIVE").length ?? 0;
 
   const taskCount =
     boards?.reduce(
@@ -70,11 +74,11 @@ export default function DashboardPage() {
         <Card>
           <CardContent className="flex items-center gap-4">
             <div className="p-3 rounded-xl bg-purple-500/10">
-              <Brain className="w-6 h-6 text-purple-400" />
+              <Hammer className="w-6 h-6 text-purple-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{boards?.length ?? 0}</p>
-              <p className="text-sm text-atlas-text-muted">Boards</p>
+              <p className="text-2xl font-bold">{activeWork}</p>
+              <p className="text-sm text-atlas-text-muted">Active Sessions</p>
             </div>
           </CardContent>
         </Card>

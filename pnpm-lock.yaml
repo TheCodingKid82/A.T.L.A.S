@@ -103,6 +103,31 @@ importers:
         specifier: ^5.5.0
         version: 5.9.3
 
+  apps/worker:
+    dependencies:
+      '@atlas/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@atlas/services':
+        specifier: workspace:*
+        version: link:../../packages/services
+      '@atlas/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.33
+      esbuild:
+        specifier: ^0.27.0
+        version: 0.27.3
+      tsx:
+        specifier: ^4.7.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   packages/database:
     dependencies:
       '@prisma/client':

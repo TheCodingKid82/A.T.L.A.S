@@ -7,6 +7,7 @@ import { registerBrowserTools } from "./browser-tools.js";
 import { registerMcpTools } from "./mcp-tools.js";
 import { registerAgentTools } from "./agent-tools.js";
 import { registerClaudeCodeTools } from "./claude-code-tools.js";
+import { registerWorkRequestTools } from "./work-request-tools.js";
 
 export function registerAllTools(server: McpServer, agentId: string) {
   registerTaskTools(server, agentId);
@@ -17,4 +18,5 @@ export function registerAllTools(server: McpServer, agentId: string) {
   registerMcpTools(server, agentId);
   registerAgentTools(server, agentId);
   registerClaudeCodeTools(server, agentId);
+  registerWorkRequestTools(server, agentId);
 }
