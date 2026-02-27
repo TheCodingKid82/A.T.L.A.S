@@ -81,7 +81,6 @@ export async function executeMessage(
     }
 
     const args: string[] = [
-      "/remote-control",
       "--print",
       prompt,
       "--output-format", "json",
@@ -100,7 +99,7 @@ export async function executeMessage(
     const mode = session.claudeSessionId ? "Resuming session" : "Starting new session";
     await notifier.send(`${mode} — executing with Claude Code CLI...`, "NORMAL");
 
-    const { stdout } = await execFileAsync("claude", args, {
+    const { stdout, stderr } = await execFileAsync("claude", args, {
       timeout: WORKER_EXECUTION_TIMEOUT,
       cwd,
       maxBuffer: 50 * 1024 * 1024, // 50MB
@@ -109,7 +108,16 @@ export async function executeMessage(
       },
     });
 
+    if (stderr) {
+      console.error("[C.O.D.E.] Claude CLI stderr:", stderr.slice(0, 500));
+    }
+
     const duration = Date.now() - start;
+
+    if (!stdout.trim()) {
+      console.error("[C.O.D.E.] Claude CLI returned empty stdout");
+      throw new Error("Claude Code CLI returned empty response. Check ANTHROPIC_API_KEY and CLI version.");
+    }
 
     let parsed: unknown;
     try {
