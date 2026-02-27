@@ -65,7 +65,9 @@ COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/apps/worker/package.json ./apps/worker/
 
 COPY package.json pnpm-workspace.yaml ./
+COPY apps/worker/entrypoint.sh ./apps/worker/entrypoint.sh
+RUN chmod +x ./apps/worker/entrypoint.sh
 
 ENV NODE_ENV=production
 
-CMD ["node", "apps/worker/dist/worker.js"]
+CMD ["./apps/worker/entrypoint.sh"]
