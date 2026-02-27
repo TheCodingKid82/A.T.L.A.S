@@ -99,11 +99,13 @@ export async function executeMessage(
     await notifier.send(`${mode} — executing with Claude Code CLI...`, "NORMAL");
 
     // Exclude ANTHROPIC_API_KEY from child env — we use OAuth credentials
-    // written to ~/.claude/.credentials.json by entrypoint.sh instead.
-    // Having ANTHROPIC_API_KEY set (especially with an OAuth token value)
-    // causes the CLI to fail silently.
+    // stored in ~/.claude/.credentials.json (persistent volume).
     const childEnv = { ...process.env };
     delete childEnv.ANTHROPIC_API_KEY;
+
+    // Debug: log what we're about to run
+    console.error(`[C.O.D.E.] Exec: claude ${args.map(a => a.length > 80 ? a.slice(0, 80) + "..." : a).join(" ")}`);
+    console.error(`[C.O.D.E.] CWD: ${cwd}, HOME: ${childEnv.HOME}, HAS_APIKEY: ${!!childEnv.ANTHROPIC_API_KEY}`);
 
     let stdout: string;
     let stderr: string;
@@ -117,6 +119,7 @@ export async function executeMessage(
       });
       stdout = result.stdout;
       stderr = result.stderr;
+      console.error(`[C.O.D.E.] Claude CLI exited normally, stdout length: ${stdout.length}`);
     } catch (execErr: unknown) {
       // execFile throws on non-zero exit — but Claude CLI exits 1 even on
       // successful runs that return error results in JSON. Pull stdout from
@@ -129,7 +132,10 @@ export async function executeMessage(
 
       stdout = e.stdout || "";
       stderr = e.stderr || "";
-      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}`);
+      console.error(`[C.O.D.E.] Claude CLI exited with code ${e.code ?? "unknown"}, stdout length: ${stdout.length}, stderr length: ${stderr.length}`);
+      if (e.message) {
+        console.error(`[C.O.D.E.] Error message: ${e.message.slice(0, 300)}`);
+      }
     }
 
     if (stderr) {
