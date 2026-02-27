@@ -143,9 +143,14 @@ fi
 
 # Grant non-root worker user access to Claude credentials + config
 # The volume is mounted at /root/.claude; symlink into worker's home
+# and make /root accessible (755) so worker can follow the symlinks
+chmod 755 /root
 ln -sfn /root/.claude /home/worker/.claude
 ln -sfn /root/.claude.json /home/worker/.claude.json
 chown -h worker:worker /home/worker/.claude /home/worker/.claude.json
+# Also ensure the volume contents are readable
+chmod -R a+r /root/.claude 2>/dev/null || true
+chmod a+rx /root/.claude 2>/dev/null || true
 
 # Start the worker as non-root user (required for bypassPermissions mode)
 # Keep bridge daemon alive by not using exec

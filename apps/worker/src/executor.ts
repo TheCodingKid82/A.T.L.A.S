@@ -111,6 +111,10 @@ export async function executeMessage(
     if (abortController.signal.aborted) {
       throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
     }
+    const errMsg = err instanceof Error ? err.message : String(err);
+    const errStack = err instanceof Error ? err.stack : "";
+    console.error(`[C.O.D.E.] SDK error: ${errMsg}`);
+    if (errStack) console.error(`[C.O.D.E.] SDK stack: ${errStack}`);
     throw err;
   } finally {
     clearTimeout(timeout);
