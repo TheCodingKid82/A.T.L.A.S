@@ -39,11 +39,14 @@ RUN pnpm --filter @atlas/worker build
 # ── Production image ──────────────────────────────────────────
 FROM base AS runner
 
-# Install Claude Code CLI, Railway CLI, and GitHub CLI
+# Install Claude Code CLI, Railway CLI, GitHub CLI, and gosu (for dropping privileges)
 RUN npm install -g @anthropic-ai/claude-code @railway/cli && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
+    apt-get update && apt-get install -y gh gosu && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user — Claude Code CLI blocks bypassPermissions as root
+RUN useradd -m -s /bin/bash worker
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=deps /app/apps/worker/node_modules ./apps/worker/node_modules
