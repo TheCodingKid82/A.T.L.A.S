@@ -21,6 +21,59 @@ if [ ! -f ~/.claude.json ]; then
   fi
 fi
 
+# Configure MCP servers in ~/.claude.json so Claude CLI can access them.
+# NOTE: --mcp-config flag hangs in --print mode, but servers in ~/.claude.json
+# use the same loading path as account-synced servers, which work fine.
+node -e "
+const fs = require('fs');
+const path = require('path');
+const configPath = path.join(require('os').homedir(), '.claude.json');
+
+let config = {};
+try { config = JSON.parse(fs.readFileSync(configPath, 'utf-8')); } catch {}
+
+const mcpServers = {};
+
+// ATLAS MCP server
+if (process.env.ATLAS_MCP_URL && process.env.WORKER_API_KEY) {
+  mcpServers.atlas = {
+    type: 'url',
+    url: process.env.ATLAS_MCP_URL,
+    headers: { Authorization: 'Bearer ' + process.env.WORKER_API_KEY }
+  };
+}
+
+// Zapier MCP server
+if (process.env.ZAPIER_MCP_TOKEN) {
+  mcpServers.zapier = {
+    type: 'url',
+    url: 'https://mcp.zapier.com/api/v1/connect',
+    headers: { Authorization: 'Bearer ' + process.env.ZAPIER_MCP_TOKEN }
+  };
+}
+
+if (Object.keys(mcpServers).length > 0) {
+  config.mcpServers = { ...(config.mcpServers || {}), ...mcpServers };
+  fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
+  console.log('[C.O.D.E.] Configured MCP servers in ~/.claude.json:', Object.keys(mcpServers).join(', '));
+} else {
+  console.log('[C.O.D.E.] Warning: No MCP server credentials found — skipping MCP config');
+}
+"
+
+# Verify CLI auth
+if [ -n "$GH_TOKEN" ]; then
+  echo "[C.O.D.E.] GitHub CLI auth: GH_TOKEN is set"
+else
+  echo "[C.O.D.E.] Warning: GH_TOKEN not set — gh commands will fail"
+fi
+
+if [ -n "$RAILWAY_API_TOKEN" ]; then
+  echo "[C.O.D.E.] Railway CLI auth: RAILWAY_API_TOKEN is set"
+else
+  echo "[C.O.D.E.] Warning: RAILWAY_API_TOKEN not set — railway commands will fail"
+fi
+
 echo "[C.O.D.E.] Claude Code CLI version: $(claude --version 2>&1 || echo 'unknown')"
 
 # Start the worker

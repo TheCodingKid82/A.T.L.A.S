@@ -24,6 +24,9 @@ services:
       WORKER_API_KEY: ${WORKER_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       DEFAULT_WORKING_DIR: /tmp
+      GH_TOKEN: ${GH_TOKEN}
+      RAILWAY_API_TOKEN: ${RAILWAY_API_TOKEN}
+      ZAPIER_MCP_TOKEN: ${ZAPIER_MCP_TOKEN}
     depends_on:
       - postgres
 
