@@ -271,11 +271,30 @@ export default function WorkRequestsPage() {
                                   <summary className="text-xs text-atlas-text-muted cursor-pointer hover:text-atlas-text">
                                     View result
                                   </summary>
-                                  <pre className="text-xs bg-atlas-bg rounded p-2 mt-1 overflow-auto max-h-48">
-                                    {typeof msg.result === "string"
-                                      ? msg.result
-                                      : JSON.stringify(msg.result, null, 2)}
-                                  </pre>
+                                  <div className="relative mt-1">
+                                    <button
+                                      onClick={() => {
+                                        const text = typeof msg.result === "string"
+                                          ? msg.result
+                                          : JSON.stringify(msg.result, null, 2);
+                                        navigator.clipboard.writeText(text);
+                                        const btn = document.getElementById(`copy-${msg.id}`);
+                                        if (btn) {
+                                          btn.textContent = "Copied!";
+                                          setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+                                        }
+                                      }}
+                                      id={`copy-${msg.id}`}
+                                      className="absolute top-2 right-2 text-xs px-2 py-0.5 rounded bg-atlas-border/50 text-atlas-text-muted hover:text-atlas-text hover:bg-atlas-border transition-colors"
+                                    >
+                                      Copy
+                                    </button>
+                                    <pre className="text-xs bg-atlas-bg rounded p-2 overflow-auto max-h-48">
+                                      {typeof msg.result === "string"
+                                        ? msg.result
+                                        : JSON.stringify(msg.result, null, 2)}
+                                    </pre>
+                                  </div>
                                 </details>
                               )}
                             </div>
