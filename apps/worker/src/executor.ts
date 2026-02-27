@@ -117,8 +117,13 @@ export async function executeMessage(
     const resumeFlag = session.claudeSessionId ? ` --resume '${session.claudeSessionId}'` : "";
     await writeFile(wrapperScript, `#!/bin/bash
 unset ANTHROPIC_API_KEY
+# Close inherited file descriptors from Node.js (IPC channel, etc.)
+for fd in $(seq 3 20); do
+  eval "exec \${fd}>&-" 2>/dev/null || true
+done
 PROMPT=$(cat '${promptFile}')
-exec claude --print "$PROMPT" --output-format json${resumeFlag}
+# Redirect stdin from /dev/null to prevent CLI blocking on pipe input
+exec claude --print "$PROMPT" --output-format json${resumeFlag} < /dev/null
 `, "utf-8");
     await execFileAsync("chmod", ["+x", wrapperScript]);
 
