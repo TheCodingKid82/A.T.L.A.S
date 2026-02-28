@@ -1,7 +1,7 @@
-import { spawn } from "child_process";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
 import type { WorkSessionService } from "@atlas/services";
 import type { Notifier } from "./notifier.js";
+import { InputManager } from "./input-manager.js";
 
 interface WorkMessage {
   id: string;
@@ -27,22 +27,20 @@ export interface ExecutionResult {
   duration: number;
 }
 
-/** Build env without CLAUDECODE and ANTHROPIC_API_KEY. */
-function cleanEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k !== "CLAUDECODE" && k !== "ANTHROPIC_API_KEY" && v !== undefined) {
-      env[k] = v;
-    }
-  }
-  return env;
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "");
 }
 
+const inputManager = new InputManager();
+
 /**
- * Execute a work message using `claude --print` mode.
- * Streams text output (no --output-format json) so we get incremental
- * progress and can save partial output on timeout.
- * Session ID is extracted from stderr (--resume line).
+ * Execute a work message using an interactive Claude TUI session (PTY).
+ * Spawns a new interactive session per message, types the prompt in,
+ * collects the response, then exits to extract the session ID.
+ * Each session gets Remote Control automatically (remoteControlAtStartup=true).
  */
 export async function executeMessage(
   message: WorkMessage,
@@ -57,118 +55,77 @@ export async function executeMessage(
   const cwd =
     session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
 
-  const mode = session.claudeSessionId
-    ? "Resuming session"
-    : "Starting new session";
+  const mode = session.claudeSessionId ? "Resuming" : "Starting new";
   await notifier.send(
-    `${mode} — running Claude CLI (print mode)...`,
+    `${mode} interactive session (TUI mode)...`,
     "NORMAL"
   );
 
-  const args = [
-    "--print",
-    "--model", "claude-opus-4-6",
-    "--dangerously-skip-permissions",
-    // No --output-format json — we want streaming text so we get
-    // incremental output and can save partial results on timeout
-  ];
-  if (session.claudeSessionId) {
-    args.push("--resume", session.claudeSessionId);
-  }
-
   console.log(
-    `[C.O.D.E.] Running: claude ${args.join(" ")} (cwd=${cwd}, prompt=${prompt.length} chars)`
+    `[C.O.D.E.] Spawning interactive TUI session (cwd=${cwd}, prompt=${prompt.length} chars, resume=${session.claudeSessionId || "none"})`
   );
 
-  return new Promise((resolve, reject) => {
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let lastProgressLog = Date.now();
-    let lastProgressWrite = Date.now();
-
-    const proc = spawn("claude", args, {
-      cwd,
-      env: cleanEnv(),
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    proc.stdout.on("data", (data: Buffer) => {
-      const chunk = data.toString();
-      stdout += chunk;
-
-      const now = Date.now();
-
-      // Write partial output to DB every 5 seconds for live dashboard updates
-      if (now - lastProgressWrite >= 5_000 && stdout.length > 0) {
-        lastProgressWrite = now;
-        workSessionService.updateMessageProgress(messageId, stdout).catch(() => {});
-      }
-
-      // Log progress every 30 seconds
-      if (now - lastProgressLog >= 30_000) {
-        lastProgressLog = now;
-        const elapsed = Math.round((now - start) / 1000);
-        const lastLine = stdout.trim().split("\n").pop()?.slice(0, 200) || "";
-        console.log(`[C.O.D.E.] [${elapsed}s] Output: ${stdout.length} chars | Last: ${lastLine}`);
-      }
-    });
-
-    proc.stderr.on("data", (data: Buffer) => {
-      stderr += data.toString();
-    });
-
-    // Write prompt to stdin and close it
-    proc.stdin.write(prompt);
-    proc.stdin.end();
-
-    // Safety timeout
-    const timer = setTimeout(() => {
-      timedOut = true;
-      const elapsed = Math.round((Date.now() - start) / 1000);
-      console.warn(`[C.O.D.E.] Timeout after ${elapsed}s — killing process (${stdout.length} chars captured)`);
-      proc.kill("SIGTERM");
-      setTimeout(() => proc.kill("SIGKILL"), 5_000);
-    }, WORKER_EXECUTION_TIMEOUT);
-
-    proc.on("close", (code) => {
-      clearTimeout(timer);
-      const duration = Date.now() - start;
-
-      // Extract session ID from stderr (claude --print outputs "Resume this session with: claude --resume <id>")
-      const sessionMatch = stderr.match(/--resume\s+([a-f0-9-]+)/);
-      const sessionId = sessionMatch?.[1] ?? null;
-
-      if (stderr) {
-        // Log non-resume stderr content
-        const stderrClean = stderr.replace(/Resume this session.*$/m, "").trim();
-        if (stderrClean) {
-          console.log(`[C.O.D.E.] stderr: ${stderrClean.slice(0, 500)}`);
-        }
-      }
-
-      console.log(`[C.O.D.E.] Process exited (code=${code}, duration=${Math.round(duration / 1000)}s, stdout=${stdout.length} chars, sessionId=${sessionId || "none"})`);
-
-      const result = stdout.trim() || (timedOut ? "[Timed out — partial output below]" : "[No output]");
-      const summary = result.length > 500 ? result.slice(0, 500) : result;
-
-      if (timedOut) {
-        resolve({
-          summary: `[Timed out after ${Math.round(duration / 1000)}s]\n\n${summary}`,
-          output: result,
-          sessionId,
-          duration,
-        });
-      } else {
-        resolve({ summary, output: result, sessionId, duration });
-      }
-    });
-
-    proc.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
+  // Spawn interactive Claude TUI session in PTY
+  const ptySession = await inputManager.spawnSession({
+    cwd,
+    resume: session.claudeSessionId || undefined,
+    model: "claude-opus-4-6",
   });
+
+  // Stream partial output to dashboard every 5 seconds
+  const progressInterval = setInterval(() => {
+    if (ptySession.responseBuffer.length > 0) {
+      const partial = stripAnsi(ptySession.responseBuffer)
+        .replace(/\r/g, "")
+        .trim();
+      if (partial) {
+        workSessionService
+          .updateMessageProgress(messageId, partial)
+          .catch(() => {});
+      }
+    }
+  }, 5_000);
+
+  // Log progress every 30 seconds
+  const logInterval = setInterval(() => {
+    const elapsed = Math.round((Date.now() - start) / 1000);
+    const bufLen = ptySession.responseBuffer.length;
+    console.log(
+      `[C.O.D.E.] [${elapsed}s] Interactive session in progress — responseBuffer: ${bufLen} chars`
+    );
+  }, 30_000);
+
+  try {
+    // Send prompt to the TUI and collect the response
+    const { result, sessionId: extractedSessionId } =
+      await inputManager.sendPrompt(
+        ptySession,
+        prompt,
+        WORKER_EXECUTION_TIMEOUT
+      );
+
+    clearInterval(progressInterval);
+    clearInterval(logInterval);
+
+    // Gracefully exit session and extract the Claude session ID
+    const exitSessionId = await inputManager.exitSession(ptySession);
+    const sessionId = extractedSessionId || exitSessionId;
+
+    const duration = Date.now() - start;
+    const output = result || "[No output]";
+    const summary = output.length > 500 ? output.slice(0, 500) : output;
+
+    console.log(
+      `[C.O.D.E.] Interactive session completed (${Math.round(duration / 1000)}s, ${output.length} chars, sessionId=${sessionId || "none"})`
+    );
+
+    return { summary, output, sessionId, duration };
+  } catch (error) {
+    clearInterval(progressInterval);
+    clearInterval(logInterval);
+    inputManager.kill(ptySession);
+    throw error;
+  }
 }
 
 /** Discover available Zapier tools by querying the MCP tools/list endpoint. */
