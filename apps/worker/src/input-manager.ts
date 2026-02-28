@@ -101,6 +101,21 @@ export class InputManager {
   }
 
   /**
+   * Write text to the PTY in chunks to avoid overwhelming the terminal buffer.
+   * Large writes can cause data loss or blocking on the PTY.
+   */
+  private async chunkedWrite(session: Session, text: string): Promise<void> {
+    const CHUNK_SIZE = 256;
+    const CHUNK_DELAY = 30;
+    for (let i = 0; i < text.length; i += CHUNK_SIZE) {
+      session.pty.write(text.slice(i, i + CHUNK_SIZE));
+      if (i + CHUNK_SIZE < text.length) {
+        await new Promise((resolve) => setTimeout(resolve, CHUNK_DELAY));
+      }
+    }
+  }
+
+  /**
    * Send a prompt and collect the response.
    * Uses ⏺ marker to detect response start and quiet period for completion.
    */
@@ -109,18 +124,29 @@ export class InputManager {
     prompt: string,
     timeout = WORKER_EXECUTION_TIMEOUT
   ): Promise<{ result: string; sessionId: string | null }> {
+    // Write prompt in chunks, then submit
+    console.log(`[InputManager] Writing prompt (${prompt.length} chars) to session ${session.id}`);
+    await this.chunkedWrite(session, prompt);
+    console.log(`[InputManager] Prompt written, sending Kitty Enter in 500ms`);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    session.pty.write(KITTY_ENTER);
+    console.log(`[InputManager] Kitty Enter sent, waiting for response...`);
+
     return new Promise((resolve, reject) => {
       session.responseBuffer = "";
       let lastDataTime = Date.now();
       let responseStarted = false;
       let checkTimer: ReturnType<typeof setInterval>;
       let timeoutTimer: ReturnType<typeof setTimeout>;
+      let debugTimer: ReturnType<typeof setInterval>;
       const QUIET_MS = 5_000;
+      const startTime = Date.now();
 
       const cleanup = () => {
         session.onData = null;
         clearInterval(checkTimer);
         clearTimeout(timeoutTimer);
+        clearInterval(debugTimer);
       };
 
       session.onData = (data: string) => {
@@ -130,9 +156,18 @@ export class InputManager {
         // Detect response start (⏺ marker)
         if (!responseStarted && data.includes("⏺")) {
           responseStarted = true;
-          console.log(`[InputManager] Response started (⏺ detected)`);
+          console.log(`[InputManager] Response started (⏺ detected) after ${Math.round((Date.now() - startTime) / 1000)}s`);
         }
       };
+
+      // Periodic debug logging
+      debugTimer = setInterval(() => {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        const bufLen = session.responseBuffer.length;
+        const stripped = stripAnsi(session.responseBuffer);
+        const lastChars = stripped.slice(-200).replace(/\r/g, "").replace(/\n/g, " ").trim();
+        console.log(`[InputManager] [${elapsed}s] responseStarted=${responseStarted} bufLen=${bufLen} last200="${lastChars}"`);
+      }, 15_000);
 
       // Check for completion: response started + quiet period
       checkTimer = setInterval(() => {
@@ -141,6 +176,7 @@ export class InputManager {
         if (quietMs >= QUIET_MS) {
           cleanup();
           const result = this.extractResponse(session.responseBuffer);
+          console.log(`[InputManager] Response complete after ${Math.round((Date.now() - startTime) / 1000)}s (${result.result.length} chars)`);
           resolve(result);
         }
       }, 500);
@@ -148,17 +184,16 @@ export class InputManager {
       // Overall timeout
       timeoutTimer = setTimeout(() => {
         cleanup();
-        console.warn(`[InputManager] Session ${session.id} timed out after ${timeout / 1000}s`);
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
+        console.warn(`[InputManager] Session ${session.id} timed out after ${elapsed}s`);
+        const stripped = stripAnsi(session.responseBuffer);
+        console.warn(`[InputManager] Buffer at timeout (${stripped.length} chars): "${stripped.slice(-500).replace(/\r/g, "").trim()}"`);
         if (responseStarted) {
           resolve(this.extractResponse(session.responseBuffer));
         } else {
           resolve({ result: "[Timed out — no response received]", sessionId: null });
         }
       }, timeout);
-
-      // Type the prompt text, then submit with Kitty Enter
-      session.pty.write(prompt);
-      setTimeout(() => session.pty.write(KITTY_ENTER), 200);
     });
   }
 
@@ -168,8 +203,9 @@ export class InputManager {
    */
   async sendCommand(session: Session, command: string, waitMs = 10_000): Promise<string> {
     const bufferStart = session.buffer.length;
-    session.pty.write(command);
-    setTimeout(() => session.pty.write(KITTY_ENTER), 200);
+    await this.chunkedWrite(session, command);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    session.pty.write(KITTY_ENTER);
     await new Promise((resolve) => setTimeout(resolve, waitMs));
     return stripAnsi(session.buffer.slice(bufferStart)).replace(/\r/g, "").trim();
   }
