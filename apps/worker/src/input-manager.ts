@@ -1,35 +1,36 @@
 import * as pty from "node-pty";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
 
-// Comprehensive ANSI escape sequence regex (from ansi-regex package)
-const ANSI_REGEX =
+// Kitty keyboard protocol Enter key — the Claude CLI enables \x1b[>1u
+// (Kitty protocol) and only recognizes this sequence as "submit prompt".
+// Plain \r is treated as newline in the multi-line input.
+const KITTY_ENTER = "\x1b[13u";
+
+// ANSI escape sequence regex (from ansi-regex package)
+const ANSI_RE =
   // eslint-disable-next-line no-control-regex
   /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_REGEX, "");
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "");
 }
 
-/** Normalize PTY output: strip ANSI, handle \r line overwrites, normalize newlines. */
-function normalizeText(text: string): string {
-  let result = stripAnsi(text);
-  // Handle \r\n → \n
-  result = result.replace(/\r\n/g, "\n");
-  // Handle bare \r (cursor return = line overwrite) — keep only last segment
-  result = result
-    .split("\n")
-    .map((line) => {
-      const parts = line.split("\r");
-      return parts[parts.length - 1];
-    })
-    .join("\n");
-  return result;
+/** Build env without CLAUDECODE and ANTHROPIC_API_KEY. */
+function cleanEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k !== "CLAUDECODE" && k !== "ANTHROPIC_API_KEY" && v !== undefined) {
+      env[k] = v;
+    }
+  }
+  return env;
 }
 
 export interface Session {
   id: string;
   pty: pty.IPty;
   buffer: string;
+  responseBuffer: string;
   onData: ((chunk: string) => void) | null;
 }
 
@@ -40,6 +41,7 @@ export class InputManager {
 
   /**
    * Spawn a new interactive Claude CLI session in a PTY.
+   * Waits for the ❯ prompt before returning.
    */
   async spawnSession(opts: {
     cwd: string;
@@ -47,32 +49,17 @@ export class InputManager {
     model?: string;
   }): Promise<Session> {
     const args: string[] = ["--dangerously-skip-permissions"];
+    if (opts.model) args.push("--model", opts.model);
+    if (opts.resume) args.push("--resume", opts.resume);
 
-    if (opts.model) {
-      args.push("--model", opts.model);
-    }
-    if (opts.resume) {
-      args.push("--resume", opts.resume);
-    }
-
-    // Exclude ANTHROPIC_API_KEY — we use OAuth credentials
-    const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (k !== "ANTHROPIC_API_KEY" && v !== undefined) {
-        env[k] = v;
-      }
-    }
-
-    console.log(
-      `[InputManager] Spawning: claude ${args.join(" ")} (cwd: ${opts.cwd})`
-    );
+    console.log(`[InputManager] Spawning: claude ${args.join(" ")} (cwd: ${opts.cwd})`);
 
     const ptyProcess = pty.spawn("claude", args, {
       name: "xterm-256color",
       cols: 200,
       rows: 50,
       cwd: opts.cwd,
-      env,
+      env: cleanEnv(),
     });
 
     const id = `session-${++sessionCounter}`;
@@ -80,6 +67,7 @@ export class InputManager {
       id,
       pty: ptyProcess,
       buffer: "",
+      responseBuffer: "",
       onData: null,
     };
 
@@ -89,101 +77,45 @@ export class InputManager {
     });
 
     ptyProcess.onExit(({ exitCode, signal }) => {
-      console.log(
-        `[InputManager] Session ${id} exited (code=${exitCode}, signal=${signal})`
-      );
+      console.log(`[InputManager] Session ${id} exited (code=${exitCode}, signal=${signal})`);
       this.sessions.delete(id);
     });
 
     this.sessions.set(id, session);
 
-    // Wait for the CLI to become ready (show initial prompt)
+    // Wait for ❯ prompt (CLI ready for input)
     await this.waitForReady(session, 30_000);
     console.log(`[InputManager] Session ${id} ready`);
+
+    // Handle trust prompt if present
+    if (stripAnsi(session.buffer).includes("trust")) {
+      console.log(`[InputManager] Handling trust prompt...`);
+      session.pty.write(KITTY_ENTER);
+      // Wait for ready again after trust
+      session.buffer = "";
+      await this.waitForReady(session, 15_000);
+      console.log(`[InputManager] Trust confirmed, session ${id} ready`);
+    }
 
     return session;
   }
 
   /**
-   * Send a user prompt to a session and collect the full response.
+   * Send a prompt and collect the response.
+   * Uses ⏺ marker to detect response start and quiet period for completion.
    */
   async sendPrompt(
     session: Session,
     prompt: string,
     timeout = WORKER_EXECUTION_TIMEOUT
-  ): Promise<string> {
-    return this.sendAndCollect(session, prompt, timeout);
-  }
-
-  /**
-   * Send a slash command (e.g., /remote-control) to a session.
-   */
-  async sendCommand(
-    session: Session,
-    command: string,
-    timeout = 30_000
-  ): Promise<string> {
-    return this.sendAndCollect(session, command, timeout);
-  }
-
-  /**
-   * Send a command and return after a delay without waiting for completion.
-   * Used for long-lived commands like /remote-control that never "finish".
-   */
-  async fireAndForget(
-    session: Session,
-    command: string,
-    waitMs = 10_000
-  ): Promise<string> {
-    const bufferStart = session.buffer.length;
-    session.pty.write(command + "\r");
-    await new Promise((resolve) => setTimeout(resolve, waitMs));
-    const raw = session.buffer.slice(bufferStart);
-    return this.cleanResponse(raw, command);
-  }
-
-  /**
-   * Kill a specific session.
-   */
-  kill(session: Session): void {
-    console.log(`[InputManager] Killing session ${session.id}`);
-    try {
-      session.pty.kill();
-    } catch {}
-    this.sessions.delete(session.id);
-  }
-
-  /**
-   * Kill all sessions (for shutdown).
-   */
-  killAll(): void {
-    for (const session of this.sessions.values()) {
-      console.log(`[InputManager] Killing session ${session.id}`);
-      try {
-        session.pty.kill();
-      } catch {}
-    }
-    this.sessions.clear();
-  }
-
-  /**
-   * Send text to the PTY and wait for the response to complete.
-   * Uses quiet-period detection: once output stops flowing for QUIET_MS,
-   * we consider the response complete.
-   */
-  private sendAndCollect(
-    session: Session,
-    text: string,
-    timeout: number
-  ): Promise<string> {
-    return new Promise((resolve) => {
-      const bufferStart = session.buffer.length;
+  ): Promise<{ result: string; sessionId: string | null }> {
+    return new Promise((resolve, reject) => {
+      session.responseBuffer = "";
       let lastDataTime = Date.now();
-      let hasOutput = false;
+      let responseStarted = false;
       let checkTimer: ReturnType<typeof setInterval>;
       let timeoutTimer: ReturnType<typeof setTimeout>;
-      const QUIET_MS = 5_000; // 5 seconds of silence = done
-      const CHECK_MS = 500; // Check every 500ms
+      const QUIET_MS = 5_000;
 
       const cleanup = () => {
         session.onData = null;
@@ -191,53 +123,99 @@ export class InputManager {
         clearTimeout(timeoutTimer);
       };
 
-      const extractResult = (): string => {
-        const raw = session.buffer.slice(bufferStart);
-        return this.cleanResponse(raw, text);
-      };
-
-      session.onData = () => {
+      session.onData = (data: string) => {
+        session.responseBuffer += data;
         lastDataTime = Date.now();
-        hasOutput = true;
+
+        // Detect response start (⏺ marker)
+        if (!responseStarted && data.includes("⏺")) {
+          responseStarted = true;
+          console.log(`[InputManager] Response started (⏺ detected)`);
+        }
       };
 
-      // Periodically check if output has settled
+      // Check for completion: response started + quiet period
       checkTimer = setInterval(() => {
-        if (!hasOutput) return;
-
+        if (!responseStarted) return;
         const quietMs = Date.now() - lastDataTime;
         if (quietMs >= QUIET_MS) {
           cleanup();
-          resolve(extractResult());
+          const result = this.extractResponse(session.responseBuffer);
+          resolve(result);
         }
-      }, CHECK_MS);
+      }, 500);
 
-      // Overall timeout — resolve with what we have (caller kills session if needed)
+      // Overall timeout
       timeoutTimer = setTimeout(() => {
         cleanup();
-        console.warn(
-          `[InputManager] Session ${session.id} timed out after ${timeout / 1000}s`
-        );
-        resolve(extractResult() || "[Timed out]");
+        console.warn(`[InputManager] Session ${session.id} timed out after ${timeout / 1000}s`);
+        if (responseStarted) {
+          resolve(this.extractResponse(session.responseBuffer));
+        } else {
+          resolve({ result: "[Timed out — no response received]", sessionId: null });
+        }
       }, timeout);
 
-      // Send the input
-      session.pty.write(text + "\r");
+      // Type the prompt text, then submit with Kitty Enter
+      session.pty.write(prompt);
+      setTimeout(() => session.pty.write(KITTY_ENTER), 200);
     });
   }
 
   /**
-   * Wait for the CLI to show its initial prompt after spawning.
-   * Detects readiness by waiting for output to settle.
+   * Send a slash command (e.g., /remote-control).
+   * Fire-and-forget: sends command and returns after a delay.
    */
+  async sendCommand(session: Session, command: string, waitMs = 10_000): Promise<string> {
+    const bufferStart = session.buffer.length;
+    session.pty.write(command);
+    setTimeout(() => session.pty.write(KITTY_ENTER), 200);
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    return stripAnsi(session.buffer.slice(bufferStart)).replace(/\r/g, "").trim();
+  }
+
+  /**
+   * Gracefully exit a session and extract the session ID.
+   */
+  async exitSession(session: Session): Promise<string | null> {
+    const bufferStart = session.buffer.length;
+    session.pty.write("/exit");
+    setTimeout(() => session.pty.write(KITTY_ENTER), 200);
+
+    // Wait for exit and capture session ID
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        session.pty.kill();
+        resolve(null);
+      }, 10_000);
+
+      session.pty.onExit(() => {
+        clearTimeout(timer);
+        const exitOutput = stripAnsi(session.buffer.slice(bufferStart));
+        const match = exitOutput.match(/--resume\s+([a-f0-9-]+)/);
+        resolve(match ? match[1] : null);
+      });
+    });
+  }
+
+  kill(session: Session): void {
+    console.log(`[InputManager] Killing session ${session.id}`);
+    try { session.pty.kill(); } catch {}
+    this.sessions.delete(session.id);
+  }
+
+  killAll(): void {
+    for (const session of this.sessions.values()) {
+      try { session.pty.kill(); } catch {}
+    }
+    this.sessions.clear();
+  }
+
+  /** Wait for ❯ prompt in stripped buffer. */
   private waitForReady(session: Session, timeout: number): Promise<void> {
     return new Promise((resolve) => {
-      let lastDataTime = Date.now();
-      let hasOutput = false;
       let checkTimer: ReturnType<typeof setInterval>;
       let timeoutTimer: ReturnType<typeof setTimeout>;
-      const QUIET_MS = 2_000; // 2 seconds of silence = ready
-      const CHECK_MS = 500;
 
       const cleanup = () => {
         session.onData = null;
@@ -245,59 +223,63 @@ export class InputManager {
         clearTimeout(timeoutTimer);
       };
 
-      session.onData = () => {
-        lastDataTime = Date.now();
-        hasOutput = true;
-      };
+      session.onData = () => {}; // keep lastDataTime fresh
 
       checkTimer = setInterval(() => {
-        if (!hasOutput) return;
-        if (Date.now() - lastDataTime >= QUIET_MS) {
+        if (stripAnsi(session.buffer).includes("❯")) {
           cleanup();
           resolve();
         }
-      }, CHECK_MS);
+      }, 300);
 
       timeoutTimer = setTimeout(() => {
         cleanup();
-        console.warn(
-          "[InputManager] Ready detection timed out — proceeding anyway"
-        );
+        console.warn("[InputManager] Ready detection timed out — proceeding");
         resolve();
       }, timeout);
     });
   }
 
   /**
-   * Clean PTY output: strip ANSI codes, normalize line endings,
-   * remove echoed input and trailing prompt artifacts.
+   * Extract response text from PTY output.
+   * Response is marked with ⏺ prefix. Status indicators (✶, ✽, ✳)
+   * and UI chrome (────, ❯, bypass permissions) are stripped.
    */
-  private cleanResponse(raw: string, sentText: string): string {
-    const text = normalizeText(raw);
+  private extractResponse(rawOutput: string): { result: string; sessionId: string | null } {
+    const stripped = stripAnsi(rawOutput);
 
-    const lines = text.split("\n");
-
-    // Find where our echoed input ends — skip it
-    const inputPrefix = sentText.slice(0, Math.min(50, sentText.length));
-    let startIdx = 0;
-    for (let i = 0; i < Math.min(lines.length, 20); i++) {
-      if (lines[i].includes(inputPrefix)) {
-        startIdx = i + 1;
-        break;
-      }
+    // Find ⏺ marker — Claude's response text starts after it
+    const markerIdx = stripped.indexOf("⏺");
+    if (markerIdx < 0) {
+      return { result: stripped.replace(/\r/g, "").trim(), sessionId: null };
     }
 
-    // Remove trailing empty lines and prompt characters
-    let endIdx = lines.length;
-    for (let i = lines.length - 1; i >= startIdx; i--) {
-      const line = lines[i].trim();
-      if (line === "" || /^[❯>$%]\s*$/.test(line)) {
-        endIdx = i;
-      } else {
-        break;
-      }
+    let response = stripped.slice(markerIdx + 1);
+
+    // Remove status indicators that appear inline after response text
+    // Patterns: ✶ Word…, ✽ Word…, ✳ Word…, · Word…
+    response = response.replace(/[✶✽✳·]\s*\w+…/g, "");
+
+    // Stop at UI chrome
+    const stopPatterns = ["────", "bypass permissions", "shift+tab", "(running stop hook)"];
+    for (const pat of stopPatterns) {
+      const idx = response.indexOf(pat);
+      if (idx >= 0) response = response.slice(0, idx);
     }
 
-    return lines.slice(startIdx, endIdx).join("\n").trim();
+    // Clean up: normalize whitespace, strip carriage returns
+    response = response
+      .replace(/\r/g, "")
+      .replace(/❯/g, "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l)
+      .join("\n")
+      .trim();
+
+    // Look for session ID in the full output (from --resume message)
+    const sessionMatch = stripped.match(/--resume\s+([a-f0-9-]+)/);
+
+    return { result: response, sessionId: sessionMatch?.[1] ?? null };
   }
 }

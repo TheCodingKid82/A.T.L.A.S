@@ -57,19 +57,23 @@ export async function executeMessage(
   });
 
   try {
-    const result = await inputManager.sendPrompt(
+    const { result, sessionId: promptSessionId } = await inputManager.sendPrompt(
       cliSession,
       prompt,
       WORKER_EXECUTION_TIMEOUT
     );
+
+    // Gracefully exit to capture session ID from --resume output
+    const exitSessionId = await inputManager.exitSession(cliSession);
+    const sessionId = exitSessionId || promptSessionId;
+
     const duration = Date.now() - start;
     const summary = result.length > 500 ? result.slice(0, 500) : result;
 
-    // TODO: extract Claude session ID from CLI output for future resumption.
-    // The interactive CLI doesn't easily expose the session ID in stdout.
-    return { summary, output: result, sessionId: null, duration };
-  } finally {
+    return { summary, output: result, sessionId, duration };
+  } catch (err) {
     inputManager.kill(cliSession);
+    throw err;
   }
 }
 
