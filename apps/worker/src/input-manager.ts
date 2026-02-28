@@ -127,15 +127,21 @@ export class InputManager {
     // Write prompt in chunks, then submit
     console.log(`[InputManager] Writing prompt (${prompt.length} chars) to session ${session.id}`);
     await this.chunkedWrite(session, prompt);
-    console.log(`[InputManager] Prompt written, sending Kitty Enter in 500ms`);
+    console.log(`[InputManager] Prompt written, submitting...`);
     await new Promise((resolve) => setTimeout(resolve, 500));
-    session.pty.write(KITTY_ENTER);
-    console.log(`[InputManager] Kitty Enter sent, waiting for response...`);
+
+    // Detect if CLI is using Kitty keyboard protocol by checking for the
+    // enable sequence (\x1b[>Xu) in the buffer. If not found, use standard \r.
+    const kittyEnabled = session.buffer.includes("\x1b[>") && session.buffer.includes("u");
+    const enterKey = kittyEnabled ? KITTY_ENTER : "\r";
+    console.log(`[InputManager] Kitty protocol detected: ${kittyEnabled}, using ${kittyEnabled ? "\\x1b[13u" : "\\r"}`);
+    session.pty.write(enterKey);
 
     return new Promise((resolve, reject) => {
       session.responseBuffer = "";
       let lastDataTime = Date.now();
       let responseStarted = false;
+      let retriedEnter = false;
       let checkTimer: ReturnType<typeof setInterval>;
       let timeoutTimer: ReturnType<typeof setTimeout>;
       let debugTimer: ReturnType<typeof setInterval>;
@@ -153,20 +159,30 @@ export class InputManager {
         session.responseBuffer += data;
         lastDataTime = Date.now();
 
-        // Detect response start (⏺ marker)
-        if (!responseStarted && data.includes("⏺")) {
-          responseStarted = true;
-          console.log(`[InputManager] Response started (⏺ detected) after ${Math.round((Date.now() - startTime) / 1000)}s`);
+        // Detect response start — check both chunk and full buffer for ⏺
+        if (!responseStarted) {
+          if (data.includes("⏺") || stripAnsi(session.responseBuffer).includes("⏺")) {
+            responseStarted = true;
+            console.log(`[InputManager] Response started (⏺ detected) after ${Math.round((Date.now() - startTime) / 1000)}s`);
+          }
         }
       };
 
-      // Periodic debug logging
+      // Periodic debug logging + fallback Enter retry
       debugTimer = setInterval(() => {
         const elapsed = Math.round((Date.now() - startTime) / 1000);
         const bufLen = session.responseBuffer.length;
         const stripped = stripAnsi(session.responseBuffer);
         const lastChars = stripped.slice(-200).replace(/\r/g, "").replace(/\n/g, " ").trim();
         console.log(`[InputManager] [${elapsed}s] responseStarted=${responseStarted} bufLen=${bufLen} last200="${lastChars}"`);
+
+        // If no response after 15s, retry with the opposite Enter key
+        if (!responseStarted && !retriedEnter && elapsed >= 15) {
+          retriedEnter = true;
+          const retryKey = kittyEnabled ? "\r" : KITTY_ENTER;
+          console.log(`[InputManager] No response after ${elapsed}s — retrying with ${kittyEnabled ? "\\r" : "\\x1b[13u"}`);
+          session.pty.write(retryKey);
+        }
       }, 15_000);
 
       // Check for completion: response started + quiet period
