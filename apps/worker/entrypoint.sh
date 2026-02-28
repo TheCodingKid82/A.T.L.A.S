@@ -122,6 +122,18 @@ fi
 
 echo "[C.O.D.E.] Claude Code CLI version: $(claude --version 2>&1 || echo 'unknown')"
 
+# ── Start display stack for computer-use mode ────────────────
+# Only start if EXECUTION_MODE is "computer-use" (or default)
+EXECUTION_MODE="${EXECUTION_MODE:-computer-use}"
+if [ "$EXECUTION_MODE" = "computer-use" ]; then
+  echo "[C.O.D.E.] Starting display stack (computer-use mode)..."
+  bash ./apps/worker/scripts/start-display.sh
+  export DISPLAY=:1
+  echo "[C.O.D.E.] Display stack started, DISPLAY=$DISPLAY"
+else
+  echo "[C.O.D.E.] Skipping display stack (print mode)"
+fi
+
 # ── Set up non-root worker user ──────────────────────────────
 # Claude Code CLI blocks bypassPermissions as root, so both the
 # bridge daemon and worker process must run as non-root.

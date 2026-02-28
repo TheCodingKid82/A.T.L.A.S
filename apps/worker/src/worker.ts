@@ -3,6 +3,7 @@ import { WorkSessionService, AgentService } from "@atlas/services";
 import { WORKER_POLL_INTERVAL_MS, WORKER_AGENT_SLUG } from "@atlas/shared";
 import { InputManager, type Session } from "./input-manager.js";
 import { executeMessage } from "./executor.js";
+import { executeWithComputerUse, isDisplayAvailable } from "./computer-use-driver.js";
 import { Notifier } from "./notifier.js";
 
 const workSessionService = new WorkSessionService();
@@ -12,6 +13,23 @@ const inputManager = new InputManager();
 let workerId: string;
 let running = true;
 let controlSession: Session | null = null;
+
+// Determine execution mode: "computer-use" or "print"
+function detectExecutionMode(): "computer-use" | "print" {
+  const envMode = process.env.EXECUTION_MODE;
+  if (envMode === "print") return "print";
+  if (envMode === "computer-use") {
+    if (!isDisplayAvailable()) {
+      console.warn("[C.O.D.E.] EXECUTION_MODE=computer-use but no display available — falling back to print mode");
+      return "print";
+    }
+    return "computer-use";
+  }
+  // Default: auto-detect
+  return isDisplayAvailable() ? "computer-use" : "print";
+}
+
+const executionMode = detectExecutionMode();
 
 async function initialize() {
   const worker = await prisma.agent.findUnique({
@@ -26,15 +44,20 @@ async function initialize() {
 
   await agentService.updateStatus(workerId, "ONLINE");
 
+  const modeLabel = executionMode === "computer-use" ? "Computer-Use (visual)" : "Print (CLI)";
+  const vncInfo = executionMode === "computer-use"
+    ? `\n  ║   VNC: ${(process.env.WORKER_VNC_URL || 'localhost:6080').padEnd(38)}║`
+    : "";
+
   console.log(`
   ╔══════════════════════════════════════════════════╗
   ║       A.T.L.A.S. Worker — C.O.D.E.              ║
   ║                                                  ║
   ║   Claude Orchestrated Development Engine         ║
-  ║   Interactive CLI mode (PTY)                     ║
+  ║   Mode: ${modeLabel.padEnd(39)}║
   ║                                                  ║
   ║   Poll interval: ${String(WORKER_POLL_INTERVAL_MS).padEnd(5)}ms                    ║
-  ║   Worker ID: ${workerId}              ║
+  ║   Worker ID: ${workerId}              ║${vncInfo}
   ╚══════════════════════════════════════════════════╝
   `);
 }
@@ -75,7 +98,8 @@ async function pollLoop() {
         );
 
         try {
-          const result = await executeMessage(message, session, notifier, message.id, workSessionService);
+          const executor = executionMode === "computer-use" ? executeWithComputerUse : executeMessage;
+          const result = await executor(message, session, notifier, message.id, workSessionService);
 
           // Complete the message and update session's claudeSessionId
           await workSessionService.completeMessage(

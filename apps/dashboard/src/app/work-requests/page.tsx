@@ -16,7 +16,9 @@ import {
   Pause,
   User,
   Bot,
+  Monitor,
 } from "lucide-react";
+import Link from "next/link";
 
 const STATUS_CONFIG: Record<string, { icon: any; color: string; variant: any; spin?: boolean }> = {
   ACTIVE: { icon: Loader2, color: "text-blue-400", variant: "default", spin: true },
@@ -158,6 +160,16 @@ export default function WorkRequestsPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {busy && session.executionMode === "computer-use" && (
+                      <Link
+                        href={`/work-requests/${session.id}/live`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1 px-2 py-1 text-xs rounded-md bg-atlas-accent/20 text-atlas-accent hover:bg-atlas-accent/30 transition-colors"
+                      >
+                        <Monitor className="w-3 h-3" />
+                        Watch Live
+                      </Link>
+                    )}
                     <Badge variant={config.variant}>{session.status}</Badge>
                     <Badge variant="default">{TYPE_LABELS[session.type] ?? session.type}</Badge>
                     <Badge

@@ -39,11 +39,32 @@ RUN pnpm --filter @atlas/worker build
 # ── Production image ──────────────────────────────────────────
 FROM base AS runner
 
-# Install Claude Code CLI, Railway CLI, GitHub CLI, and gosu (for dropping privileges)
+# Install Claude Code CLI, Railway CLI, GitHub CLI, gosu, and display stack
 RUN npm install -g @anthropic-ai/claude-code@latest @railway/cli && \
     curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
-    apt-get update && apt-get install -y gh gosu && rm -rf /var/lib/apt/lists/*
+    apt-get update && apt-get install -y gh gosu \
+    # Display stack for computer-use mode
+    xvfb openbox xterm \
+    # Automation tools
+    xdotool scrot imagemagick \
+    # VNC server
+    x11vnc \
+    # Fonts for terminal rendering
+    xfonts-base fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install noVNC + websockify for browser-based VNC access
+RUN git clone --branch v1.5.0 --depth 1 https://github.com/novnc/noVNC.git /opt/noVNC && \
+    git clone --branch v0.12.0 --depth 1 https://github.com/novnc/websockify.git /opt/noVNC/utils/websockify && \
+    rm -rf /opt/noVNC/.git /opt/noVNC/utils/websockify/.git
+
+# Display environment
+ENV DISPLAY=:1
+ENV DISPLAY_WIDTH=1024
+ENV DISPLAY_HEIGHT=768
+ENV VNC_PORT=5901
+ENV NOVNC_PORT=6080
 
 # Create non-root user — Claude Code CLI blocks bypassPermissions as root
 RUN useradd -m -s /bin/bash worker
@@ -69,7 +90,8 @@ COPY --from=build /app/apps/worker/package.json ./apps/worker/
 
 COPY package.json pnpm-workspace.yaml ./
 COPY apps/worker/entrypoint.sh ./apps/worker/entrypoint.sh
-RUN chmod +x ./apps/worker/entrypoint.sh
+COPY apps/worker/scripts ./apps/worker/scripts
+RUN chmod +x ./apps/worker/entrypoint.sh ./apps/worker/scripts/*.sh
 
 ENV NODE_ENV=production
 

@@ -173,11 +173,17 @@ export class WorkSessionService {
         },
       });
 
-      // Set session's workerId if not already set
+      // Set session's workerId and execution mode if not already set
       if (!message.session.workerId) {
+        const vncUrl = process.env.WORKER_VNC_URL || null;
+        const executionMode = process.env.EXECUTION_MODE || (vncUrl ? "computer-use" : "print");
         await prisma.workSession.update({
           where: { id: message.sessionId },
-          data: { workerId },
+          data: {
+            workerId,
+            executionMode,
+            vncUrl: executionMode === "computer-use" ? vncUrl : null,
+          },
         });
       }
 
