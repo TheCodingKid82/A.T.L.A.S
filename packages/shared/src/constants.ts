@@ -37,7 +37,7 @@ export const WORK_MESSAGE_STATUSES = ["PENDING", "PROCESSING", "COMPLETED", "FAI
 export const WORK_MESSAGE_ROLES = ["USER", "WORKER"] as const;
 
 export const WORKER_POLL_INTERVAL_MS = 5000;
-export const WORKER_EXECUTION_TIMEOUT = 600000;
+export const WORKER_EXECUTION_TIMEOUT = 1800000; // 30 minutes
 export const WORKER_AGENT_SLUG = "worker";
 export const WORKER_AGENT_NAME = "C.O.D.E.";
 

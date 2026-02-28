@@ -39,8 +39,9 @@ function cleanEnv(): Record<string, string> {
 
 /**
  * Execute a work message using `claude --print` mode.
- * This pipes the prompt via stdin and reads stdout — no PTY/TUI needed.
- * Much more reliable than trying to interact with the interactive CLI.
+ * Streams text output (no --output-format json) so we get incremental
+ * progress and can save partial output on timeout.
+ * Session ID is extracted from stderr (--resume line).
  */
 export async function executeMessage(
   message: WorkMessage,
@@ -65,7 +66,8 @@ export async function executeMessage(
     "--print",
     "--model", "claude-opus-4-6",
     "--dangerously-skip-permissions",
-    "--output-format", "json",
+    // No --output-format json — we want streaming text so we get
+    // incremental output and can save partial results on timeout
   ];
   if (session.claudeSessionId) {
     args.push("--resume", session.claudeSessionId);
@@ -79,16 +81,26 @@ export async function executeMessage(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let lastProgressLog = Date.now();
 
     const proc = spawn("claude", args, {
       cwd,
       env: cleanEnv(),
       stdio: ["pipe", "pipe", "pipe"],
-      timeout: WORKER_EXECUTION_TIMEOUT,
     });
 
     proc.stdout.on("data", (data: Buffer) => {
-      stdout += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+
+      // Log progress every 30 seconds
+      const now = Date.now();
+      if (now - lastProgressLog >= 30_000) {
+        lastProgressLog = now;
+        const elapsed = Math.round((now - start) / 1000);
+        const lastLine = stdout.trim().split("\n").pop()?.slice(0, 200) || "";
+        console.log(`[C.O.D.E.] [${elapsed}s] Output: ${stdout.length} chars | Last: ${lastLine}`);
+      }
     });
 
     proc.stderr.on("data", (data: Buffer) => {
@@ -102,7 +114,8 @@ export async function executeMessage(
     // Safety timeout
     const timer = setTimeout(() => {
       timedOut = true;
-      console.warn(`[C.O.D.E.] Timeout after ${WORKER_EXECUTION_TIMEOUT / 1000}s — killing process`);
+      const elapsed = Math.round((Date.now() - start) / 1000);
+      console.warn(`[C.O.D.E.] Timeout after ${elapsed}s — killing process (${stdout.length} chars captured)`);
       proc.kill("SIGTERM");
       setTimeout(() => proc.kill("SIGKILL"), 5_000);
     }, WORKER_EXECUTION_TIMEOUT);
@@ -111,27 +124,33 @@ export async function executeMessage(
       clearTimeout(timer);
       const duration = Date.now() - start;
 
+      // Extract session ID from stderr (claude --print outputs "Resume this session with: claude --resume <id>")
+      const sessionMatch = stderr.match(/--resume\s+([a-f0-9-]+)/);
+      const sessionId = sessionMatch?.[1] ?? null;
+
       if (stderr) {
-        console.log(`[C.O.D.E.] stderr: ${stderr.slice(0, 500)}`);
+        // Log non-resume stderr content
+        const stderrClean = stderr.replace(/Resume this session.*$/m, "").trim();
+        if (stderrClean) {
+          console.log(`[C.O.D.E.] stderr: ${stderrClean.slice(0, 500)}`);
+        }
       }
 
-      console.log(`[C.O.D.E.] Process exited (code=${code}, duration=${Math.round(duration / 1000)}s, stdout=${stdout.length} chars)`);
+      console.log(`[C.O.D.E.] Process exited (code=${code}, duration=${Math.round(duration / 1000)}s, stdout=${stdout.length} chars, sessionId=${sessionId || "none"})`);
+
+      const result = stdout.trim() || (timedOut ? "[Timed out — partial output below]" : "[No output]");
+      const summary = result.length > 500 ? result.slice(0, 500) : result;
 
       if (timedOut) {
         resolve({
-          summary: "[Timed out]",
-          output: stdout || "[Timed out — no output]",
-          sessionId: null,
+          summary: `[Timed out after ${Math.round(duration / 1000)}s]\n\n${summary}`,
+          output: result,
+          sessionId,
           duration,
         });
-        return;
+      } else {
+        resolve({ summary, output: result, sessionId, duration });
       }
-
-      // Parse JSON output to extract result and session ID
-      const { result, sessionId } = parseOutput(stdout);
-
-      const summary = result.length > 500 ? result.slice(0, 500) : result;
-      resolve({ summary, output: result, sessionId, duration });
     });
 
     proc.on("error", (err) => {
@@ -139,31 +158,6 @@ export async function executeMessage(
       reject(err);
     });
   });
-}
-
-/**
- * Parse the JSON output from `claude --print --output-format json`.
- * The output is a JSON object with `result` (text) and `session_id` fields.
- */
-function parseOutput(stdout: string): { result: string; sessionId: string | null } {
-  const trimmed = stdout.trim();
-  if (!trimmed) {
-    return { result: "[No output]", sessionId: null };
-  }
-
-  try {
-    const parsed = JSON.parse(trimmed);
-    // claude --print --output-format json returns:
-    // { result: string, session_id: string, ... }
-    const result = parsed.result || parsed.text || trimmed;
-    const sessionId = parsed.session_id || null;
-    return { result, sessionId };
-  } catch {
-    // If not JSON, return raw output — might be plain text or error
-    // Also try to extract session ID from text output
-    const sessionMatch = trimmed.match(/--resume\s+([a-f0-9-]+)/);
-    return { result: trimmed, sessionId: sessionMatch?.[1] ?? null };
-  }
 }
 
 /** Discover available Zapier tools by querying the MCP tools/list endpoint. */
