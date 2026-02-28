@@ -271,7 +271,24 @@ export default function WorkRequestsPage() {
                                   Error: {msg.errorMessage}
                                 </p>
                               )}
-                              {msg.result && (
+                              {msg.result && msg.status === "PROCESSING" && (
+                                <div className="mt-2">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <Loader2 className="w-3 h-3 text-blue-400 animate-spin" />
+                                    <span className="text-xs text-blue-400 font-medium">
+                                      Live Output
+                                    </span>
+                                  </div>
+                                  <div className="relative">
+                                    <pre className="text-xs bg-atlas-bg rounded p-2 overflow-auto max-h-64 border border-blue-400/20">
+                                      {typeof msg.result === "string"
+                                        ? msg.result
+                                        : JSON.stringify(msg.result, null, 2)}
+                                    </pre>
+                                  </div>
+                                </div>
+                              )}
+                              {msg.result && msg.status !== "PROCESSING" && (
                                 <details className="mt-2">
                                   <summary className="text-xs text-atlas-text-muted cursor-pointer hover:text-atlas-text">
                                     View result

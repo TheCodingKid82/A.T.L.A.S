@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
+import type { WorkSessionService } from "@atlas/services";
 import type { Notifier } from "./notifier.js";
 
 interface WorkMessage {
@@ -46,7 +47,9 @@ function cleanEnv(): Record<string, string> {
 export async function executeMessage(
   message: WorkMessage,
   session: WorkSession,
-  notifier: Notifier
+  notifier: Notifier,
+  messageId: string,
+  workSessionService: WorkSessionService
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
@@ -82,6 +85,7 @@ export async function executeMessage(
     let stderr = "";
     let timedOut = false;
     let lastProgressLog = Date.now();
+    let lastProgressWrite = Date.now();
 
     const proc = spawn("claude", args, {
       cwd,
@@ -93,8 +97,15 @@ export async function executeMessage(
       const chunk = data.toString();
       stdout += chunk;
 
-      // Log progress every 30 seconds
       const now = Date.now();
+
+      // Write partial output to DB every 5 seconds for live dashboard updates
+      if (now - lastProgressWrite >= 5_000 && stdout.length > 0) {
+        lastProgressWrite = now;
+        workSessionService.updateMessageProgress(messageId, stdout).catch(() => {});
+      }
+
+      // Log progress every 30 seconds
       if (now - lastProgressLog >= 30_000) {
         lastProgressLog = now;
         const elapsed = Math.round((now - start) / 1000);

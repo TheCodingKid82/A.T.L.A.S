@@ -187,6 +187,13 @@ export class WorkSessionService {
     }
   }
 
+  async updateMessageProgress(messageId: string, partialOutput: string) {
+    await prisma.workMessage.update({
+      where: { id: messageId },
+      data: { result: partialOutput as unknown as Prisma.InputJsonValue },
+    });
+  }
+
   async completeMessage(messageId: string, result: unknown, claudeSessionId?: string) {
     const message = await prisma.workMessage.findUniqueOrThrow({
       where: { id: messageId },
