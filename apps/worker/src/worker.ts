@@ -1,34 +1,17 @@
 import { prisma } from "@atlas/database";
 import { WorkSessionService, AgentService } from "@atlas/services";
 import { WORKER_POLL_INTERVAL_MS, WORKER_AGENT_SLUG } from "@atlas/shared";
+import { InputManager, type Session } from "./input-manager.js";
 import { executeMessage } from "./executor.js";
 import { Notifier } from "./notifier.js";
-import * as pty from "node-pty";
 
 const workSessionService = new WorkSessionService();
 const agentService = new AgentService();
+const inputManager = new InputManager();
 
 let workerId: string;
 let running = true;
-let controlPty: pty.IPty | null = null;
-
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
-
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, "");
-}
-
-/** Build env without CLAUDECODE and ANTHROPIC_API_KEY (conflicts with OAuth). */
-function cleanEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k !== "CLAUDECODE" && k !== "ANTHROPIC_API_KEY" && v !== undefined) {
-      env[k] = v;
-    }
-  }
-  return env;
-}
+let workerSession: Session | null = null;
 
 async function initialize() {
   const worker = await prisma.agent.findUnique({
@@ -48,7 +31,7 @@ async function initialize() {
   ║       A.T.L.A.S. Worker — C.O.D.E.              ║
   ║                                                  ║
   ║   Claude Orchestrated Development Engine         ║
-  ║   Interactive CLI mode (PTY)                     ║
+  ║   Interactive TUI + Remote Control               ║
   ║                                                  ║
   ║   Poll interval: ${String(WORKER_POLL_INTERVAL_MS).padEnd(5)}ms                    ║
   ║   Worker ID: ${workerId}              ║
@@ -57,56 +40,53 @@ async function initialize() {
 }
 
 /**
- * Spawn an interactive Claude TUI session in a PTY.
- * Remote Control activates automatically via remoteControlAtStartup=true
- * in ~/.claude.json (configured by entrypoint.sh). No input needed.
- * Auto-restarts on exit.
+ * Spawn the single interactive Claude TUI session.
+ * Remote Control activates automatically (remoteControlAtStartup=true).
+ * ALL work executes in this session so Remote Control can monitor it.
  */
-function startControlSession() {
-  try {
-    console.log("[C.O.D.E.] Spawning interactive Claude session for Remote Control...");
-    console.log("[C.O.D.E.] (remoteControlAtStartup=true — no manual /remote-control needed)");
+async function spawnWorkerSession(): Promise<Session> {
+  console.log("[C.O.D.E.] Spawning interactive TUI session...");
+  console.log("[C.O.D.E.] (remoteControlAtStartup=true — Remote Control will auto-activate)");
 
-    const proc = pty.spawn("claude", ["--dangerously-skip-permissions"], {
-      name: "xterm-256color",
-      cols: 200,
-      rows: 50,
-      cwd: "/tmp",
-      env: cleanEnv(),
-    });
+  const session = await inputManager.spawnSession({ cwd: "/tmp" });
 
-    proc.onData((data: string) => {
-      const clean = stripAnsi(data).replace(/\r/g, "").trim();
-      if (clean) {
-        for (const line of clean.split("\n")) {
-          const trimmed = line.trim();
-          if (trimmed && trimmed.length > 1) {
-            console.log(`[C.O.D.E.] RC | ${trimmed.slice(0, 500)}`);
-          }
-        }
-      }
-    });
+  console.log(`[C.O.D.E.] TUI session ${session.id} ready — Remote Control should be active`);
 
-    proc.onExit(({ exitCode, signal }) => {
-      console.warn(`[C.O.D.E.] Remote Control session exited (code=${exitCode}, signal=${signal})`);
-      controlPty = null;
-      if (running) {
-        console.log("[C.O.D.E.] Restarting Remote Control in 10s...");
-        setTimeout(() => startControlSession(), 10_000);
-      }
-    });
+  return session;
+}
 
-    controlPty = proc;
-  } catch (error) {
-    console.error("[C.O.D.E.] Failed to start Remote Control:", error);
-    if (running) {
-      console.log("[C.O.D.E.] Will retry in 30s...");
-      setTimeout(() => startControlSession(), 30_000);
+/**
+ * Ensure the worker session is alive. Respawn if it died.
+ */
+async function ensureSession(): Promise<Session> {
+  if (workerSession) {
+    // Check if PTY is still alive by testing if we can access it
+    try {
+      // node-pty processes don't have a simple "alive" check,
+      // but if the session was removed from InputManager on exit, it's gone
+      // We rely on the onExit handler setting workerSession = null
+      return workerSession;
+    } catch {
+      workerSession = null;
     }
   }
+
+  console.log("[C.O.D.E.] Worker session not available — spawning new one...");
+  workerSession = await spawnWorkerSession();
+
+  // Watch for unexpected exit
+  workerSession.pty.onExit(({ exitCode, signal }) => {
+    console.warn(`[C.O.D.E.] Worker TUI session exited unexpectedly (code=${exitCode}, signal=${signal})`);
+    workerSession = null;
+  });
+
+  return workerSession;
 }
 
 async function pollLoop() {
+  // Spawn the initial worker session before entering the poll loop
+  await ensureSession();
+
   while (running) {
     try {
       const message = await workSessionService.claimNextMessage(workerId);
@@ -128,9 +108,20 @@ async function pollLoop() {
         );
 
         try {
-          const result = await executeMessage(message, session, notifier, message.id, workSessionService);
+          // Ensure TUI session is alive
+          const ptySession = await ensureSession();
 
-          // Complete the message and update session's claudeSessionId
+          const result = await executeMessage(
+            inputManager,
+            ptySession,
+            message,
+            session,
+            notifier,
+            message.id,
+            workSessionService
+          );
+
+          // Complete the message
           await workSessionService.completeMessage(
             message.id,
             result.output,
@@ -153,6 +144,8 @@ async function pollLoop() {
             `Failed: **${session.title}**\nSession: \`${session.id}\`\nError: ${errorMsg}`,
             "URGENT"
           );
+
+          // If the session died during execution, it'll be respawned on next poll
         }
 
         await agentService.updateStatus(workerId, "ONLINE");
@@ -168,10 +161,7 @@ async function pollLoop() {
 async function shutdown() {
   console.log("[C.O.D.E.] Shutting down...");
   running = false;
-  if (controlPty) {
-    try { controlPty.kill(); } catch {}
-    controlPty = null;
-  }
+  inputManager.killAll();
   if (workerId) {
     await agentService.updateStatus(workerId, "OFFLINE").catch(() => {});
   }
@@ -183,10 +173,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 initialize()
-  .then(() => {
-    startControlSession();
-    return pollLoop();
-  })
+  .then(() => pollLoop())
   .catch((err) => {
     console.error("[C.O.D.E.] Fatal error:", err);
     process.exit(1);

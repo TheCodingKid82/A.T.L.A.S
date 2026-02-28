@@ -1,7 +1,7 @@
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
 import type { WorkSessionService } from "@atlas/services";
 import type { Notifier } from "./notifier.js";
-import { InputManager } from "./input-manager.js";
+import type { InputManager, Session } from "./input-manager.js";
 
 interface WorkMessage {
   id: string;
@@ -34,15 +34,14 @@ function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, "");
 }
 
-const inputManager = new InputManager();
-
 /**
- * Execute a work message using an interactive Claude TUI session (PTY).
- * Spawns a new interactive session per message, types the prompt in,
- * collects the response, then exits to extract the session ID.
- * Each session gets Remote Control automatically (remoteControlAtStartup=true).
+ * Execute a work message by sending the prompt to the existing interactive
+ * TUI session (which has Remote Control active). The session stays alive
+ * between messages — we just type prompts into it and read responses.
  */
 export async function executeMessage(
+  inputManager: InputManager,
+  ptySession: Session,
   message: WorkMessage,
   session: WorkSession,
   notifier: Notifier,
@@ -52,25 +51,15 @@ export async function executeMessage(
   const start = Date.now();
 
   const prompt = await buildPrompt(message, session);
-  const cwd =
-    session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
 
-  const mode = session.claudeSessionId ? "Resuming" : "Starting new";
   await notifier.send(
-    `${mode} interactive session (TUI mode)...`,
+    `Executing in interactive TUI session (Remote Control active)...`,
     "NORMAL"
   );
 
   console.log(
-    `[C.O.D.E.] Spawning interactive TUI session (cwd=${cwd}, prompt=${prompt.length} chars, resume=${session.claudeSessionId || "none"})`
+    `[C.O.D.E.] Sending prompt to TUI session (${prompt.length} chars)`
   );
-
-  // Spawn interactive Claude TUI session in PTY
-  const ptySession = await inputManager.spawnSession({
-    cwd,
-    resume: session.claudeSessionId || undefined,
-    model: "claude-opus-4-6",
-  });
 
   // Stream partial output to dashboard every 5 seconds
   const progressInterval = setInterval(() => {
@@ -91,39 +80,34 @@ export async function executeMessage(
     const elapsed = Math.round((Date.now() - start) / 1000);
     const bufLen = ptySession.responseBuffer.length;
     console.log(
-      `[C.O.D.E.] [${elapsed}s] Interactive session in progress — responseBuffer: ${bufLen} chars`
+      `[C.O.D.E.] [${elapsed}s] TUI response in progress — buffer: ${bufLen} chars`
     );
   }, 30_000);
 
   try {
-    // Send prompt to the TUI and collect the response
-    const { result, sessionId: extractedSessionId } =
-      await inputManager.sendPrompt(
-        ptySession,
-        prompt,
-        WORKER_EXECUTION_TIMEOUT
-      );
+    // Send prompt to the TUI and wait for response
+    const { result, sessionId } = await inputManager.sendPrompt(
+      ptySession,
+      prompt,
+      WORKER_EXECUTION_TIMEOUT
+    );
 
     clearInterval(progressInterval);
     clearInterval(logInterval);
-
-    // Gracefully exit session and extract the Claude session ID
-    const exitSessionId = await inputManager.exitSession(ptySession);
-    const sessionId = extractedSessionId || exitSessionId;
 
     const duration = Date.now() - start;
     const output = result || "[No output]";
     const summary = output.length > 500 ? output.slice(0, 500) : output;
 
     console.log(
-      `[C.O.D.E.] Interactive session completed (${Math.round(duration / 1000)}s, ${output.length} chars, sessionId=${sessionId || "none"})`
+      `[C.O.D.E.] TUI response complete (${Math.round(duration / 1000)}s, ${output.length} chars)`
     );
 
+    // Session stays alive — don't exit it
     return { summary, output, sessionId, duration };
   } catch (error) {
     clearInterval(progressInterval);
     clearInterval(logInterval);
-    inputManager.kill(ptySession);
     throw error;
   }
 }
@@ -166,15 +150,17 @@ async function buildPrompt(
   message: WorkMessage,
   session: WorkSession
 ): Promise<string> {
-  // For continuation messages, just send the content directly —
-  // Claude Code --resume already has the full conversation context
+  // For continuation messages, just send the content with session context
   if (session.claudeSessionId) {
-    return message.content;
+    return `[Follow-up for session "${session.title}"]\n\n${message.content}`;
   }
 
   const metadataStr = session.metadata
     ? `\n\nAdditional context:\n${JSON.stringify(session.metadata, null, 2)}`
     : "";
+
+  const cwd =
+    session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
 
   // Discover available Zapier tools (non-blocking — falls back gracefully)
   const zapierTools = await discoverZapierTools();
@@ -191,10 +177,15 @@ You have been assigned a work session:
 **Type:** ${session.type}
 **Priority:** ${session.priority}
 **Requester ID:** ${session.requesterId}
+**Working Directory:** ${cwd}
 
 **Instructions:**
 ${message.content}
 ${metadataStr}
+
+## Important: Working Directory
+
+First, \`cd ${cwd}\` before starting any work.
 
 ## Available Tools & CLIs
 
