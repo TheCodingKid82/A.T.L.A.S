@@ -43,7 +43,8 @@ async function startControlSession() {
   try {
     console.log("[C.O.D.E.] Spawning control session for /remote-control...");
     controlSession = await inputManager.spawnSession({ cwd: "/tmp" });
-    const result = await inputManager.sendCommand(controlSession, "/remote-control");
+    // /remote-control is long-lived — fire and forget, don't wait for completion
+    const result = await inputManager.fireAndForget(controlSession, "/remote-control");
     console.log(`[C.O.D.E.] Remote Control activated: ${result.slice(0, 200)}`);
   } catch (error) {
     console.error("[C.O.D.E.] Failed to start control session:", error);

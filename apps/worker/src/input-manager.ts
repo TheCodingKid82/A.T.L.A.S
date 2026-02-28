@@ -127,6 +127,22 @@ export class InputManager {
   }
 
   /**
+   * Send a command and return after a delay without waiting for completion.
+   * Used for long-lived commands like /remote-control that never "finish".
+   */
+  async fireAndForget(
+    session: Session,
+    command: string,
+    waitMs = 10_000
+  ): Promise<string> {
+    const bufferStart = session.buffer.length;
+    session.pty.write(command + "\r");
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+    const raw = session.buffer.slice(bufferStart);
+    return this.cleanResponse(raw, command);
+  }
+
+  /**
    * Kill a specific session.
    */
   kill(session: Session): void {
@@ -196,15 +212,13 @@ export class InputManager {
         }
       }, CHECK_MS);
 
-      // Overall timeout
+      // Overall timeout — resolve with what we have (caller kills session if needed)
       timeoutTimer = setTimeout(() => {
         cleanup();
         console.warn(
           `[InputManager] Session ${session.id} timed out after ${timeout / 1000}s`
         );
-        // Send Ctrl+C to interrupt, then collect what we have
-        session.pty.write("\x03");
-        setTimeout(() => resolve(extractResult() || "[Timed out]"), 2000);
+        resolve(extractResult() || "[Timed out]");
       }, timeout);
 
       // Send the input
