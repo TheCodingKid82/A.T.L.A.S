@@ -148,9 +148,11 @@ chmod 755 /root
 ln -sfn /root/.claude /home/worker/.claude
 ln -sfn /root/.claude.json /home/worker/.claude.json
 chown -h worker:worker /home/worker/.claude /home/worker/.claude.json
-# Also ensure the volume contents are readable
-chmod -R a+r /root/.claude 2>/dev/null || true
-chmod a+rx /root/.claude 2>/dev/null || true
+# Ensure the volume contents are readable AND writable by worker user
+# The SDK needs to write session data, logs, etc.
+chmod -R a+rwX /root/.claude 2>/dev/null || true
+# .claude.json also needs to be writable
+chmod a+rw /root/.claude.json 2>/dev/null || true
 
 # Verify non-root worker user can access credentials via symlinks
 echo "[C.O.D.E.] Verifying worker user credential access..."
