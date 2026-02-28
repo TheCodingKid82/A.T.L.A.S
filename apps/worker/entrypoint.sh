@@ -22,8 +22,6 @@ if [ ! -f ~/.claude.json ]; then
 fi
 
 # Configure MCP servers in ~/.claude.json so Claude CLI can access them.
-# NOTE: --mcp-config flag hangs in --print mode, but servers in ~/.claude.json
-# use the same loading path as account-synced servers, which work fine.
 node -e "
 const fs = require('fs');
 const path = require('path');
@@ -124,11 +122,25 @@ fi
 
 echo "[C.O.D.E.] Claude Code CLI version: $(claude --version 2>&1 || echo 'unknown')"
 
-# Start Remote Control bridge daemon in background
+# ── Set up non-root worker user ──────────────────────────────
+# Claude Code CLI blocks bypassPermissions as root, so both the
+# bridge daemon and worker process must run as non-root.
+chmod 755 /root
+ln -sfn /root/.claude /home/worker/.claude
+ln -sfn /root/.claude.json /home/worker/.claude.json
+chown -h worker:worker /home/worker/.claude /home/worker/.claude.json
+# Ensure the volume contents are readable AND writable by worker user
+chmod -R a+rwX /root/.claude 2>/dev/null || true
+chmod a+rw /root/.claude.json 2>/dev/null || true
+
+export HOME=/home/worker
+
+# Start Remote Control bridge daemon in background AS WORKER USER
 # This registers the worker as a "bridge environment" with Anthropic's cloud,
 # allowing interactive sessions from claude.ai/code or the Claude mobile app.
+# Must run as non-root so spawned sessions can use bypassPermissions.
 echo "[C.O.D.E.] Starting Remote Control bridge daemon..."
-claude remote-control > /tmp/remote-control.log 2>&1 &
+gosu worker claude remote-control > /tmp/remote-control.log 2>&1 &
 RC_PID=$!
 echo "[C.O.D.E.] Remote Control bridge started (PID: $RC_PID)"
 
@@ -141,21 +153,6 @@ else
   cat /tmp/remote-control.log
 fi
 
-# Grant non-root worker user access to Claude credentials + config
-# The volume is mounted at /root/.claude; symlink into worker's home
-# and make /root accessible (755) so worker can follow the symlinks
-chmod 755 /root
-ln -sfn /root/.claude /home/worker/.claude
-ln -sfn /root/.claude.json /home/worker/.claude.json
-chown -h worker:worker /home/worker/.claude /home/worker/.claude.json
-# Ensure the volume contents are readable AND writable by worker user
-# The SDK needs to write session data, logs, etc.
-chmod -R a+rwX /root/.claude 2>/dev/null || true
-# .claude.json also needs to be writable
-chmod a+rw /root/.claude.json 2>/dev/null || true
-
 # Start the worker as non-root user (required for bypassPermissions mode)
-# Set HOME explicitly since gosu inherits parent env
 # Keep bridge daemon alive by not using exec
-export HOME=/home/worker
 gosu worker node apps/worker/dist/worker.js
