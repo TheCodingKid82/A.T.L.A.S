@@ -1,5 +1,5 @@
-import { query } from "@anthropic-ai/claude-agent-sdk";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
+import type { InputManager } from "./input-manager.js";
 import type { Notifier } from "./notifier.js";
 
 interface WorkMessage {
@@ -29,104 +29,48 @@ export interface ExecutionResult {
 export async function executeMessage(
   message: WorkMessage,
   session: WorkSession,
+  inputManager: InputManager,
   notifier: Notifier
 ): Promise<ExecutionResult> {
   const start = Date.now();
 
   const prompt = await buildPrompt(message, session);
-  const cwd = session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
+  const cwd =
+    session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
 
-  // Build MCP server config for programmatic connection
-  const mcpServers: Record<string, unknown> = {};
-  if (process.env.ATLAS_MCP_URL && process.env.WORKER_API_KEY) {
-    mcpServers.atlas = {
-      type: "http",
-      url: process.env.ATLAS_MCP_URL,
-      headers: { Authorization: `Bearer ${process.env.WORKER_API_KEY}` },
-    };
-  }
-  if (process.env.ZAPIER_MCP_TOKEN) {
-    mcpServers.zapier = {
-      type: "http",
-      url: "https://mcp.zapier.com/api/v1/connect",
-      headers: { Authorization: `Bearer ${process.env.ZAPIER_MCP_TOKEN}` },
-    };
-  }
+  const mode = session.claudeSessionId
+    ? "Resuming session"
+    : "Starting new session";
+  await notifier.send(
+    `${mode} — spawning interactive Claude CLI...`,
+    "NORMAL"
+  );
 
-  // Exclude ANTHROPIC_API_KEY — we use OAuth credentials
-  const env = { ...process.env };
-  delete env.ANTHROPIC_API_KEY;
+  console.log(
+    `[C.O.D.E.] Spawning CLI session: ${session.claudeSessionId ? "resume " + session.claudeSessionId : "(new)"}, cwd=${cwd}`
+  );
 
-  const mode = session.claudeSessionId ? "Resuming session" : "Starting new session";
-  await notifier.send(`${mode} — executing with Claude Agent SDK...`, "NORMAL");
-
-  console.error(`[C.O.D.E.] SDK query: ${session.claudeSessionId ? "resume " + session.claudeSessionId : "(new session)"}, cwd=${cwd}, mcpServers=[${Object.keys(mcpServers).join(", ")}]`);
-
-  // Abort controller for timeout
-  const abortController = new AbortController();
-  const timeout = setTimeout(() => abortController.abort(), WORKER_EXECUTION_TIMEOUT);
-
-  let sessionId: string | null = null;
-  let resultText: string | null = null;
-  let resultOutput: unknown = null;
+  const cliSession = await inputManager.spawnSession({
+    cwd,
+    resume: session.claudeSessionId || undefined,
+    model: "claude-opus-4-6",
+  });
 
   try {
-    const conversation = query({
+    const result = await inputManager.sendPrompt(
+      cliSession,
       prompt,
-      options: {
-        cwd,
-        model: "claude-opus-4-6",
-        mcpServers,
-        permissionMode: "bypassPermissions",
-        allowDangerouslySkipPermissions: true,
-        settingSources: ["user"],
-        env,
-        abortController,
-        stderr: (data: string) => {
-          console.error(`[C.O.D.E.] SDK stderr: ${data.trim()}`);
-        },
-        ...(session.claudeSessionId ? { resume: session.claudeSessionId } : {}),
-      },
-    });
+      WORKER_EXECUTION_TIMEOUT
+    );
+    const duration = Date.now() - start;
+    const summary = result.length > 500 ? result.slice(0, 500) : result;
 
-    for await (const event of conversation) {
-      const e = event as Record<string, unknown>;
-
-      // Capture session ID from init message
-      if (e.type === "system" && e.subtype === "init") {
-        sessionId = e.session_id as string ?? null;
-        console.log(`[C.O.D.E.] Session ID: ${sessionId}`);
-      }
-
-      // Capture result
-      if ("result" in event) {
-        resultText = e.result as string ?? null;
-        resultOutput = event;
-        console.log(`[C.O.D.E.] SDK result (${e.subtype}): ${(resultText ?? "").slice(0, 200)}`);
-      }
-    }
-  } catch (err: unknown) {
-    if (abortController.signal.aborted) {
-      throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
-    }
-    const errMsg = err instanceof Error ? err.message : String(err);
-    const errStack = err instanceof Error ? err.stack : "";
-    console.error(`[C.O.D.E.] SDK error: ${errMsg}`);
-    if (errStack) console.error(`[C.O.D.E.] SDK stack: ${errStack}`);
-    throw err;
+    // TODO: extract Claude session ID from CLI output for future resumption.
+    // The interactive CLI doesn't easily expose the session ID in stdout.
+    return { summary, output: result, sessionId: null, duration };
   } finally {
-    clearTimeout(timeout);
+    inputManager.kill(cliSession);
   }
-
-  const duration = Date.now() - start;
-
-  if (!resultText) {
-    throw new Error("Claude Agent SDK returned no result. Check OAuth credentials and CLI version.");
-  }
-
-  const summary = resultText.length > 500 ? resultText.slice(0, 500) : resultText;
-
-  return { summary, output: resultOutput, sessionId, duration };
 }
 
 /** Discover available Zapier tools by querying the MCP tools/list endpoint. */
@@ -141,12 +85,19 @@ async function discoverZapierTools(): Promise<string[]> {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/list",
+        params: {},
+      }),
     });
 
     if (!res.ok) return [];
 
-    const data = (await res.json()) as { result?: { tools?: Array<{ name: string; description?: string }> } };
+    const data = (await res.json()) as {
+      result?: { tools?: Array<{ name: string; description?: string }> };
+    };
     return (data.result?.tools ?? []).map(
       (t) => `- ${t.name}${t.description ? ": " + t.description : ""}`
     );
@@ -156,7 +107,10 @@ async function discoverZapierTools(): Promise<string[]> {
   }
 }
 
-async function buildPrompt(message: WorkMessage, session: WorkSession): Promise<string> {
+async function buildPrompt(
+  message: WorkMessage,
+  session: WorkSession
+): Promise<string> {
   // For continuation messages, just send the content directly —
   // Claude Code --resume already has the full conversation context
   if (session.claudeSessionId) {
@@ -169,9 +123,10 @@ async function buildPrompt(message: WorkMessage, session: WorkSession): Promise<
 
   // Discover available Zapier tools (non-blocking — falls back gracefully)
   const zapierTools = await discoverZapierTools();
-  const zapierSection = zapierTools.length > 0
-    ? `\n\n**Zapier MCP Tools:**\n${zapierTools.join("\n")}`
-    : "";
+  const zapierSection =
+    zapierTools.length > 0
+      ? `\n\n**Zapier MCP Tools:**\n${zapierTools.join("\n")}`
+      : "";
 
   return `You are C.O.D.E. (Claude Orchestrated Development Engine), a worker agent in the A.T.L.A.S. system.
 

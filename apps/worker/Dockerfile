@@ -1,5 +1,5 @@
 FROM node:20-slim AS base
-RUN apt-get update -y && apt-get install -y openssl curl git && rm -rf /var/lib/apt/lists/*
+RUN apt-get update -y && apt-get install -y openssl curl git python3 make g++ && rm -rf /var/lib/apt/lists/*
 RUN corepack enable && corepack prepare pnpm@9 --activate
 WORKDIR /app
 

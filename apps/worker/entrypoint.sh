@@ -135,24 +135,6 @@ chmod a+rw /root/.claude.json 2>/dev/null || true
 
 export HOME=/home/worker
 
-# Start Remote Control bridge daemon in background AS WORKER USER
-# This registers the worker as a "bridge environment" with Anthropic's cloud,
-# allowing interactive sessions from claude.ai/code or the Claude mobile app.
-# Must run as non-root so spawned sessions can use bypassPermissions.
-echo "[C.O.D.E.] Starting Remote Control bridge daemon..."
-gosu worker claude remote-control > /tmp/remote-control.log 2>&1 &
-RC_PID=$!
-echo "[C.O.D.E.] Remote Control bridge started (PID: $RC_PID)"
-
-# Give it a few seconds to register, then check if it's still running
-sleep 3
-if kill -0 $RC_PID 2>/dev/null; then
-  echo "[C.O.D.E.] Remote Control bridge is running"
-else
-  echo "[C.O.D.E.] Warning: Remote Control bridge exited — check /tmp/remote-control.log"
-  cat /tmp/remote-control.log
-fi
-
 # Start the worker as non-root user (required for bypassPermissions mode)
-# Keep bridge daemon alive by not using exec
-gosu worker node apps/worker/dist/worker.js
+# Remote Control is now handled inside the worker via /remote-control slash command
+exec gosu worker node apps/worker/dist/worker.js

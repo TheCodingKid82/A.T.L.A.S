@@ -1,14 +1,17 @@
 import { prisma } from "@atlas/database";
 import { WorkSessionService, AgentService } from "@atlas/services";
 import { WORKER_POLL_INTERVAL_MS, WORKER_AGENT_SLUG } from "@atlas/shared";
+import { InputManager, type Session } from "./input-manager.js";
 import { executeMessage } from "./executor.js";
 import { Notifier } from "./notifier.js";
 
 const workSessionService = new WorkSessionService();
 const agentService = new AgentService();
+const inputManager = new InputManager();
 
 let workerId: string;
 let running = true;
+let controlSession: Session | null = null;
 
 async function initialize() {
   const worker = await prisma.agent.findUnique({
@@ -28,12 +31,25 @@ async function initialize() {
   ║       A.T.L.A.S. Worker — C.O.D.E.              ║
   ║                                                  ║
   ║   Claude Orchestrated Development Engine         ║
-  ║   Session-based worker (v2)                      ║
+  ║   Interactive CLI mode (PTY)                     ║
   ║                                                  ║
   ║   Poll interval: ${String(WORKER_POLL_INTERVAL_MS).padEnd(5)}ms                    ║
   ║   Worker ID: ${workerId}              ║
   ╚══════════════════════════════════════════════════╝
   `);
+}
+
+async function startControlSession() {
+  try {
+    console.log("[C.O.D.E.] Spawning control session for /remote-control...");
+    controlSession = await inputManager.spawnSession({ cwd: "/tmp" });
+    const result = await inputManager.sendCommand(controlSession, "/remote-control");
+    console.log(`[C.O.D.E.] Remote Control activated: ${result.slice(0, 200)}`);
+  } catch (error) {
+    console.error("[C.O.D.E.] Failed to start control session:", error);
+    console.error("[C.O.D.E.] Remote Control will not be available — worker continues without it");
+    controlSession = null;
+  }
 }
 
 async function pollLoop() {
@@ -58,7 +74,7 @@ async function pollLoop() {
         );
 
         try {
-          const result = await executeMessage(message, session, notifier);
+          const result = await executeMessage(message, session, inputManager, notifier);
 
           // Complete the message and update session's claudeSessionId
           await workSessionService.completeMessage(
@@ -98,6 +114,7 @@ async function pollLoop() {
 async function shutdown() {
   console.log("[C.O.D.E.] Shutting down...");
   running = false;
+  inputManager.killAll();
   if (workerId) {
     await agentService.updateStatus(workerId, "OFFLINE").catch(() => {});
   }
@@ -109,6 +126,7 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 initialize()
+  .then(() => startControlSession())
   .then(() => pollLoop())
   .catch((err) => {
     console.error("[C.O.D.E.] Fatal error:", err);
