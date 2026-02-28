@@ -154,25 +154,6 @@ chmod -R a+rwX /root/.claude 2>/dev/null || true
 # .claude.json also needs to be writable
 chmod a+rw /root/.claude.json 2>/dev/null || true
 
-# Verify non-root worker user can access credentials via symlinks
-echo "[C.O.D.E.] Verifying worker user credential access..."
-if gosu worker test -r /home/worker/.claude/.credentials.json 2>/dev/null; then
-  echo "[C.O.D.E.] Worker user CAN read credentials"
-else
-  echo "[C.O.D.E.] WARNING: Worker user CANNOT read credentials"
-  echo "[C.O.D.E.] Checking permissions..."
-  ls -la /root/.claude/.credentials.json 2>/dev/null || echo "  credentials file missing"
-  ls -la /home/worker/.claude 2>/dev/null || echo "  symlink missing"
-  ls -ld /root /root/.claude 2>/dev/null
-fi
-
-# Also verify settings.json access
-if gosu worker test -r /home/worker/.claude/settings.json 2>/dev/null; then
-  echo "[C.O.D.E.] Worker user CAN read settings.json"
-else
-  echo "[C.O.D.E.] WARNING: Worker user CANNOT read settings.json"
-fi
-
 # Start the worker as non-root user (required for bypassPermissions mode)
 # Set HOME explicitly since gosu inherits parent env
 # Keep bridge daemon alive by not using exec

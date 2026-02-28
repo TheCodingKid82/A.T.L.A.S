@@ -91,22 +91,20 @@ export async function executeMessage(
 
     for await (const event of conversation) {
       const e = event as Record<string, unknown>;
-      console.error(`[C.O.D.E.] SDK event: type=${e.type}, subtype=${e.subtype ?? ""}, hasResult=${"result" in event}`);
 
       // Capture session ID from init message
       if (e.type === "system" && e.subtype === "init") {
         sessionId = e.session_id as string ?? null;
-        console.error(`[C.O.D.E.] Session ID: ${sessionId}`);
+        console.log(`[C.O.D.E.] Session ID: ${sessionId}`);
       }
 
       // Capture result
       if ("result" in event) {
         resultText = e.result as string ?? null;
         resultOutput = event;
-        console.error(`[C.O.D.E.] SDK result (${(resultText ?? "").length} chars): ${(resultText ?? "").slice(0, 200)}`);
+        console.log(`[C.O.D.E.] SDK result (${e.subtype}): ${(resultText ?? "").slice(0, 200)}`);
       }
     }
-    console.error(`[C.O.D.E.] SDK conversation ended. resultText=${resultText !== null}, sessionId=${sessionId}`);
   } catch (err: unknown) {
     if (abortController.signal.aborted) {
       throw new Error(`Execution timed out after ${WORKER_EXECUTION_TIMEOUT / 1000}s`);
