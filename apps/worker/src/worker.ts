@@ -1,35 +1,34 @@
 import { prisma } from "@atlas/database";
 import { WorkSessionService, AgentService } from "@atlas/services";
 import { WORKER_POLL_INTERVAL_MS, WORKER_AGENT_SLUG } from "@atlas/shared";
-import { InputManager, type Session } from "./input-manager.js";
 import { executeMessage } from "./executor.js";
-import { executeWithComputerUse, isDisplayAvailable } from "./computer-use-driver.js";
 import { Notifier } from "./notifier.js";
+import * as pty from "node-pty";
 
 const workSessionService = new WorkSessionService();
 const agentService = new AgentService();
-const inputManager = new InputManager();
 
 let workerId: string;
 let running = true;
-let controlSession: Session | null = null;
+let controlPty: pty.IPty | null = null;
 
-// Determine execution mode: "computer-use" or "print"
-function detectExecutionMode(): "computer-use" | "print" {
-  const envMode = process.env.EXECUTION_MODE;
-  if (envMode === "print") return "print";
-  if (envMode === "computer-use") {
-    if (!isDisplayAvailable()) {
-      console.warn("[C.O.D.E.] EXECUTION_MODE=computer-use but no display available — falling back to print mode");
-      return "print";
-    }
-    return "computer-use";
-  }
-  // Default: auto-detect
-  return isDisplayAvailable() ? "computer-use" : "print";
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /[\u001B\u009B][[\]()#;?]*(?:(?:(?:(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/#&.:=?%@~_]*)*)?\u0007)|(?:(?:\d{1,4}(?:;\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
+
+function stripAnsi(s: string): string {
+  return s.replace(ANSI_RE, "");
 }
 
-const executionMode = detectExecutionMode();
+/** Build env without CLAUDECODE and ANTHROPIC_API_KEY (conflicts with OAuth). */
+function cleanEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k !== "CLAUDECODE" && k !== "ANTHROPIC_API_KEY" && v !== undefined) {
+      env[k] = v;
+    }
+  }
+  return env;
+}
 
 async function initialize() {
   const worker = await prisma.agent.findUnique({
@@ -44,35 +43,66 @@ async function initialize() {
 
   await agentService.updateStatus(workerId, "ONLINE");
 
-  const modeLabel = executionMode === "computer-use" ? "Computer-Use (visual)" : "Print (CLI)";
-  const vncInfo = executionMode === "computer-use"
-    ? `\n  ║   VNC: ${(process.env.WORKER_VNC_URL || 'localhost:6080').padEnd(38)}║`
-    : "";
-
   console.log(`
   ╔══════════════════════════════════════════════════╗
   ║       A.T.L.A.S. Worker — C.O.D.E.              ║
   ║                                                  ║
   ║   Claude Orchestrated Development Engine         ║
-  ║   Mode: ${modeLabel.padEnd(39)}║
+  ║   Interactive CLI mode (PTY)                     ║
   ║                                                  ║
   ║   Poll interval: ${String(WORKER_POLL_INTERVAL_MS).padEnd(5)}ms                    ║
-  ║   Worker ID: ${workerId}              ║${vncInfo}
+  ║   Worker ID: ${workerId}              ║
   ╚══════════════════════════════════════════════════╝
   `);
 }
 
-async function startControlSession() {
+/**
+ * Spawn an interactive Claude TUI session in a PTY.
+ * Remote Control activates automatically via remoteControlAtStartup=true
+ * in ~/.claude.json (configured by entrypoint.sh). No input needed.
+ * Auto-restarts on exit.
+ */
+function startControlSession() {
   try {
-    console.log("[C.O.D.E.] Spawning control session for /remote-control...");
-    controlSession = await inputManager.spawnSession({ cwd: "/tmp" });
-    // /remote-control is long-lived — send and don't wait for completion
-    const result = await inputManager.sendCommand(controlSession, "/remote-control");
-    console.log(`[C.O.D.E.] Remote Control activated: ${result.slice(0, 200)}`);
+    console.log("[C.O.D.E.] Spawning interactive Claude session for Remote Control...");
+    console.log("[C.O.D.E.] (remoteControlAtStartup=true — no manual /remote-control needed)");
+
+    const proc = pty.spawn("claude", ["--dangerously-skip-permissions"], {
+      name: "xterm-256color",
+      cols: 200,
+      rows: 50,
+      cwd: "/tmp",
+      env: cleanEnv(),
+    });
+
+    proc.onData((data: string) => {
+      const clean = stripAnsi(data).replace(/\r/g, "").trim();
+      if (clean) {
+        for (const line of clean.split("\n")) {
+          const trimmed = line.trim();
+          if (trimmed && trimmed.length > 1) {
+            console.log(`[C.O.D.E.] RC | ${trimmed.slice(0, 500)}`);
+          }
+        }
+      }
+    });
+
+    proc.onExit(({ exitCode, signal }) => {
+      console.warn(`[C.O.D.E.] Remote Control session exited (code=${exitCode}, signal=${signal})`);
+      controlPty = null;
+      if (running) {
+        console.log("[C.O.D.E.] Restarting Remote Control in 10s...");
+        setTimeout(() => startControlSession(), 10_000);
+      }
+    });
+
+    controlPty = proc;
   } catch (error) {
-    console.error("[C.O.D.E.] Failed to start control session:", error);
-    console.error("[C.O.D.E.] Remote Control will not be available — worker continues without it");
-    controlSession = null;
+    console.error("[C.O.D.E.] Failed to start Remote Control:", error);
+    if (running) {
+      console.log("[C.O.D.E.] Will retry in 30s...");
+      setTimeout(() => startControlSession(), 30_000);
+    }
   }
 }
 
@@ -98,8 +128,7 @@ async function pollLoop() {
         );
 
         try {
-          const executor = executionMode === "computer-use" ? executeWithComputerUse : executeMessage;
-          const result = await executor(message, session, notifier, message.id, workSessionService);
+          const result = await executeMessage(message, session, notifier, message.id, workSessionService);
 
           // Complete the message and update session's claudeSessionId
           await workSessionService.completeMessage(
@@ -139,7 +168,10 @@ async function pollLoop() {
 async function shutdown() {
   console.log("[C.O.D.E.] Shutting down...");
   running = false;
-  inputManager.killAll();
+  if (controlPty) {
+    try { controlPty.kill(); } catch {}
+    controlPty = null;
+  }
   if (workerId) {
     await agentService.updateStatus(workerId, "OFFLINE").catch(() => {});
   }
@@ -151,8 +183,10 @@ process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
 
 initialize()
-  .then(() => startControlSession())
-  .then(() => pollLoop())
+  .then(() => {
+    startControlSession();
+    return pollLoop();
+  })
   .catch((err) => {
     console.error("[C.O.D.E.] Fatal error:", err);
     process.exit(1);
