@@ -37,21 +37,22 @@ export async function executeMessage(
   const cwd = session.workingDirectory || process.env.DEFAULT_WORKING_DIR || "/tmp";
 
   // Build MCP server config for programmatic connection
+  // TODO: Re-enable MCP servers once SDK basic execution is confirmed working
   const mcpServers: Record<string, unknown> = {};
-  if (process.env.ATLAS_MCP_URL && process.env.WORKER_API_KEY) {
-    mcpServers.atlas = {
-      type: "http",
-      url: process.env.ATLAS_MCP_URL,
-      headers: { Authorization: `Bearer ${process.env.WORKER_API_KEY}` },
-    };
-  }
-  if (process.env.ZAPIER_MCP_TOKEN) {
-    mcpServers.zapier = {
-      type: "http",
-      url: "https://mcp.zapier.com/api/v1/connect",
-      headers: { Authorization: `Bearer ${process.env.ZAPIER_MCP_TOKEN}` },
-    };
-  }
+  // if (process.env.ATLAS_MCP_URL && process.env.WORKER_API_KEY) {
+  //   mcpServers.atlas = {
+  //     type: "http",
+  //     url: process.env.ATLAS_MCP_URL,
+  //     headers: { Authorization: `Bearer ${process.env.WORKER_API_KEY}` },
+  //   };
+  // }
+  // if (process.env.ZAPIER_MCP_TOKEN) {
+  //   mcpServers.zapier = {
+  //     type: "http",
+  //     url: "https://mcp.zapier.com/api/v1/connect",
+  //     headers: { Authorization: `Bearer ${process.env.ZAPIER_MCP_TOKEN}` },
+  //   };
+  // }
 
   // Exclude ANTHROPIC_API_KEY — we use OAuth credentials
   const env = { ...process.env };
