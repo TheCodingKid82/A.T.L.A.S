@@ -1,5 +1,5 @@
+import { spawn } from "child_process";
 import { WORKER_EXECUTION_TIMEOUT } from "@atlas/shared";
-import type { InputManager } from "./input-manager.js";
 import type { Notifier } from "./notifier.js";
 
 interface WorkMessage {
@@ -26,10 +26,25 @@ export interface ExecutionResult {
   duration: number;
 }
 
+/** Build env without CLAUDECODE and ANTHROPIC_API_KEY. */
+function cleanEnv(): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k !== "CLAUDECODE" && k !== "ANTHROPIC_API_KEY" && v !== undefined) {
+      env[k] = v;
+    }
+  }
+  return env;
+}
+
+/**
+ * Execute a work message using `claude --print` mode.
+ * This pipes the prompt via stdin and reads stdout — no PTY/TUI needed.
+ * Much more reliable than trying to interact with the interactive CLI.
+ */
 export async function executeMessage(
   message: WorkMessage,
   session: WorkSession,
-  inputManager: InputManager,
   notifier: Notifier
 ): Promise<ExecutionResult> {
   const start = Date.now();
@@ -42,38 +57,112 @@ export async function executeMessage(
     ? "Resuming session"
     : "Starting new session";
   await notifier.send(
-    `${mode} — spawning interactive Claude CLI...`,
+    `${mode} — running Claude CLI (print mode)...`,
     "NORMAL"
   );
 
+  const args = [
+    "--print",
+    "--model", "claude-opus-4-6",
+    "--dangerously-skip-permissions",
+    "--output-format", "json",
+  ];
+  if (session.claudeSessionId) {
+    args.push("--resume", session.claudeSessionId);
+  }
+
   console.log(
-    `[C.O.D.E.] Spawning CLI session: ${session.claudeSessionId ? "resume " + session.claudeSessionId : "(new)"}, cwd=${cwd}`
+    `[C.O.D.E.] Running: claude ${args.join(" ")} (cwd=${cwd}, prompt=${prompt.length} chars)`
   );
 
-  const cliSession = await inputManager.spawnSession({
-    cwd,
-    resume: session.claudeSessionId || undefined,
-    model: "claude-opus-4-6",
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+
+    const proc = spawn("claude", args, {
+      cwd,
+      env: cleanEnv(),
+      stdio: ["pipe", "pipe", "pipe"],
+      timeout: WORKER_EXECUTION_TIMEOUT,
+    });
+
+    proc.stdout.on("data", (data: Buffer) => {
+      stdout += data.toString();
+    });
+
+    proc.stderr.on("data", (data: Buffer) => {
+      stderr += data.toString();
+    });
+
+    // Write prompt to stdin and close it
+    proc.stdin.write(prompt);
+    proc.stdin.end();
+
+    // Safety timeout
+    const timer = setTimeout(() => {
+      timedOut = true;
+      console.warn(`[C.O.D.E.] Timeout after ${WORKER_EXECUTION_TIMEOUT / 1000}s — killing process`);
+      proc.kill("SIGTERM");
+      setTimeout(() => proc.kill("SIGKILL"), 5_000);
+    }, WORKER_EXECUTION_TIMEOUT);
+
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      const duration = Date.now() - start;
+
+      if (stderr) {
+        console.log(`[C.O.D.E.] stderr: ${stderr.slice(0, 500)}`);
+      }
+
+      console.log(`[C.O.D.E.] Process exited (code=${code}, duration=${Math.round(duration / 1000)}s, stdout=${stdout.length} chars)`);
+
+      if (timedOut) {
+        resolve({
+          summary: "[Timed out]",
+          output: stdout || "[Timed out — no output]",
+          sessionId: null,
+          duration,
+        });
+        return;
+      }
+
+      // Parse JSON output to extract result and session ID
+      const { result, sessionId } = parseOutput(stdout);
+
+      const summary = result.length > 500 ? result.slice(0, 500) : result;
+      resolve({ summary, output: result, sessionId, duration });
+    });
+
+    proc.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
+}
+
+/**
+ * Parse the JSON output from `claude --print --output-format json`.
+ * The output is a JSON object with `result` (text) and `session_id` fields.
+ */
+function parseOutput(stdout: string): { result: string; sessionId: string | null } {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return { result: "[No output]", sessionId: null };
+  }
 
   try {
-    const { result, sessionId: promptSessionId } = await inputManager.sendPrompt(
-      cliSession,
-      prompt,
-      WORKER_EXECUTION_TIMEOUT
-    );
-
-    // Gracefully exit to capture session ID from --resume output
-    const exitSessionId = await inputManager.exitSession(cliSession);
-    const sessionId = exitSessionId || promptSessionId;
-
-    const duration = Date.now() - start;
-    const summary = result.length > 500 ? result.slice(0, 500) : result;
-
-    return { summary, output: result, sessionId, duration };
-  } catch (err) {
-    inputManager.kill(cliSession);
-    throw err;
+    const parsed = JSON.parse(trimmed);
+    // claude --print --output-format json returns:
+    // { result: string, session_id: string, ... }
+    const result = parsed.result || parsed.text || trimmed;
+    const sessionId = parsed.session_id || null;
+    return { result, sessionId };
+  } catch {
+    // If not JSON, return raw output — might be plain text or error
+    // Also try to extract session ID from text output
+    const sessionMatch = trimmed.match(/--resume\s+([a-f0-9-]+)/);
+    return { result: trimmed, sessionId: sessionMatch?.[1] ?? null };
   }
 }
 

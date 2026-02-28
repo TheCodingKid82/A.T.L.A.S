@@ -75,7 +75,7 @@ async function pollLoop() {
         );
 
         try {
-          const result = await executeMessage(message, session, inputManager, notifier);
+          const result = await executeMessage(message, session, notifier);
 
           // Complete the message and update session's claudeSessionId
           await workSessionService.completeMessage(
