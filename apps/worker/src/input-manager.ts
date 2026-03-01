@@ -124,18 +124,17 @@ export class InputManager {
     prompt: string,
     timeout = WORKER_EXECUTION_TIMEOUT
   ): Promise<{ result: string; sessionId: string | null }> {
-    // Write prompt in chunks, then submit
+    // Write prompt using bracketed paste to avoid CLI interpreting special chars
     console.log(`[InputManager] Writing prompt (${prompt.length} chars) to session ${session.id}`);
+    session.pty.write("\x1b[200~");
     await this.chunkedWrite(session, prompt);
-    console.log(`[InputManager] Prompt written, submitting...`);
+    session.pty.write("\x1b[201~");
+    console.log(`[InputManager] Prompt pasted, submitting with Kitty Enter...`);
     await new Promise((resolve) => setTimeout(resolve, 500));
 
-    // Detect if CLI is using Kitty keyboard protocol by checking for the
-    // enable sequence (\x1b[>Xu) in the buffer. If not found, use standard \r.
-    const kittyEnabled = session.buffer.includes("\x1b[>") && session.buffer.includes("u");
-    const enterKey = kittyEnabled ? KITTY_ENTER : "\r";
-    console.log(`[InputManager] Kitty protocol detected: ${kittyEnabled}, using ${kittyEnabled ? "\\x1b[13u" : "\\r"}`);
-    session.pty.write(enterKey);
+    // Always use Kitty Enter — the CLI uses Kitty keyboard protocol internally
+    // even if it doesn't emit the enable sequence in a way we can detect.
+    session.pty.write(KITTY_ENTER);
 
     return new Promise((resolve, reject) => {
       session.responseBuffer = "";
@@ -159,11 +158,13 @@ export class InputManager {
         session.responseBuffer += data;
         lastDataTime = Date.now();
 
-        // Detect response start — check both chunk and full buffer for ⏺
+        // Detect response start — check for ⏺ (U+23FA) or ● (U+25CF) markers
+        // The TUI renders the response marker as ● in some environments
         if (!responseStarted) {
-          if (data.includes("⏺") || stripAnsi(session.responseBuffer).includes("⏺")) {
+          const stripped = stripAnsi(data + session.responseBuffer);
+          if (stripped.includes("⏺") || stripped.includes("●")) {
             responseStarted = true;
-            console.log(`[InputManager] Response started (⏺ detected) after ${Math.round((Date.now() - startTime) / 1000)}s`);
+            console.log(`[InputManager] Response started (marker detected) after ${Math.round((Date.now() - startTime) / 1000)}s`);
           }
         }
       };
@@ -176,20 +177,38 @@ export class InputManager {
         const lastChars = stripped.slice(-200).replace(/\r/g, "").replace(/\n/g, " ").trim();
         console.log(`[InputManager] [${elapsed}s] responseStarted=${responseStarted} bufLen=${bufLen} last200="${lastChars}"`);
 
-        // If no response after 15s, retry with the opposite Enter key
+        // If no response after 15s, retry Kitty Enter
         if (!responseStarted && !retriedEnter && elapsed >= 15) {
           retriedEnter = true;
-          const retryKey = kittyEnabled ? "\r" : KITTY_ENTER;
-          console.log(`[InputManager] No response after ${elapsed}s — retrying with ${kittyEnabled ? "\\r" : "\\x1b[13u"}`);
-          session.pty.write(retryKey);
+          console.log(`[InputManager] No response after ${elapsed}s — retrying Kitty Enter`);
+          session.pty.write(KITTY_ENTER);
         }
       }, 15_000);
 
-      // Check for completion: response started + quiet period
+      // Check for completion: response started + (quiet period OR ❯ prompt returned)
       checkTimer = setInterval(() => {
         if (!responseStarted) return;
         const quietMs = Date.now() - lastDataTime;
-        if (quietMs >= QUIET_MS) {
+        let done = false;
+
+        // Primary: detect ❯ prompt returning after response marker
+        const stripped = stripAnsi(session.responseBuffer);
+        const markerIdx = Math.max(stripped.indexOf("⏺"), stripped.indexOf("●"));
+        if (markerIdx >= 0) {
+          const afterMarker = stripped.slice(markerIdx + 1);
+          if (afterMarker.includes("❯")) {
+            done = true;
+            console.log(`[InputManager] Prompt returned (❯ after response marker) — complete`);
+          }
+        }
+
+        // Fallback: quiet period
+        if (!done && quietMs >= QUIET_MS) {
+          done = true;
+          console.log(`[InputManager] Quiet period (${QUIET_MS}ms) — complete`);
+        }
+
+        if (done) {
           cleanup();
           const result = this.extractResponse(session.responseBuffer);
           console.log(`[InputManager] Response complete after ${Math.round((Date.now() - startTime) / 1000)}s (${result.result.length} chars)`);
@@ -294,23 +313,28 @@ export class InputManager {
 
   /**
    * Extract response text from PTY output.
-   * Response is marked with ⏺ prefix. Status indicators (✶, ✽, ✳)
-   * and UI chrome (────, ❯, bypass permissions) are stripped.
+   * Response is marked with ⏺ (U+23FA) or ● (U+25CF) prefix.
+   * Status indicators (✶, ✽, ✳, ✻, ✢, ●) and UI chrome are stripped.
    */
   private extractResponse(rawOutput: string): { result: string; sessionId: string | null } {
     const stripped = stripAnsi(rawOutput);
 
-    // Find ⏺ marker — Claude's response text starts after it
-    const markerIdx = stripped.indexOf("⏺");
+    // Find response marker — ⏺ (U+23FA) or ● (U+25CF)
+    let markerIdx = stripped.indexOf("⏺");
+    if (markerIdx < 0) markerIdx = stripped.indexOf("●");
     if (markerIdx < 0) {
       return { result: stripped.replace(/\r/g, "").trim(), sessionId: null };
     }
 
     let response = stripped.slice(markerIdx + 1);
 
-    // Remove status indicators that appear inline after response text
-    // Patterns: ✶ Word…, ✽ Word…, ✳ Word…, · Word…
-    response = response.replace(/[✶✽✳·]\s*\w+…/g, "");
+    // Remove spinner/status indicators that appear inline
+    // Patterns: ✶ Word…, ✽ Word…, ✳ Word…, ✻ Word…, ✢ Word…, · Word…, * Word…
+    response = response.replace(/[✶✽✳✻✢·*]\s*\w+…/g, "");
+    // Remove standalone spinner characters
+    response = response.replace(/[✶✽✳✻✢*●;⠐⠂]\s*/g, "");
+    // Remove "Claude Code" labels from spinners
+    response = response.replace(/Claude Code/g, "");
 
     // Stop at UI chrome
     const stopPatterns = ["────", "bypass permissions", "shift+tab", "(running stop hook)"];
