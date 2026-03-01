@@ -9,7 +9,6 @@
     "start": "node dist/worker.js"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
     "@atlas/database": "workspace:*",
     "@atlas/services": "workspace:*",
     "@atlas/shared": "workspace:*",
