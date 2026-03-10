@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP Server Configuration",
+  "description": "Schema for defining MCP server configurations in A.T.L.A.S.",
+  "type": "object",
+  "required": ["version", "servers"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference"
+    },
+    "version": {
+      "type": "string",
+      "description": "Configuration version",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "description": {
+      "type": "string",
+      "description": "Configuration description"
+    },
+    "servers": {
+      "type": "array",
+      "description": "List of MCP server configurations",
+      "items": {
+        "type": "object",
+        "required": ["name", "transport"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Unique name for the MCP server"
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether this server is enabled",
+            "default": true
+          },
+          "transport": {
+            "type": "string",
+            "enum": ["stdio", "streamable-http", "sse"],
+            "description": "Transport mechanism"
+          },
+          "url": {
+            "type": "string",
+            "description": "Server URL (for HTTP transports)",
+            "format": "uri"
+          },
+          "command": {
+            "type": "string",
+            "description": "Command to execute (for stdio transport)"
+          },
+          "args": {
+            "type": "array",
+            "description": "Command arguments (for stdio transport)",
+            "items": {
+              "type": "string"
+            }
+          },
+          "env": {
+            "type": "object",
+            "description": "Environment variables",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Additional metadata",
+            "properties": {
+              "description": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              },
+              "category": {
+                "type": "string"
+              },
+              "documentation": {
+                "type": "string",
+                "format": "uri"
+              },
+              "requiredVariables": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "description": {
+                      "type": "string"
+                    },
+                    "example": {
+                      "type": "string"
+                    },
+                    "required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "permissions": {
+            "type": "object",
+            "description": "Agent permissions mapping",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
